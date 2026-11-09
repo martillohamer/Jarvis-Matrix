@@ -29,7 +29,11 @@ without one too, just slower.
 
 ---
 
-## Step 1 — Install Ollama (Jarvis's brain)
+## Estructura Técnica
+JARVIS utiliza módulos ES6 para manejar la lógica de forma limpia:
+- `assets/jarvis.js`: Handler de API.
+- `assets/voice-manager.js`: Control de voz.
+- `assets/styles.css`: Estilos de la interfaz.
 
 Jarvis thinks using a free local AI engine called **Ollama**. You install it once.
 

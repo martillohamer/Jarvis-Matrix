@@ -53,7 +53,11 @@ things — the **chat** and the **advanced voice mode** — and nothing else.
 
 ---
 
-### Download & install
+### Arquitectura del Proyecto
+El proyecto sigue una arquitectura modular moderna bajo la carpeta `assets/`:
+- `assets/styles.css`: Estilos centralizados.
+- `assets/jarvis.js`: Lógica de comunicación con el gateway de IA (Ollama/API).
+- `assets/voice-manager.js`: Manejo de Web Speech API (reconocimiento y síntesis).
 
 1. Open the [**Releases**](../../releases/latest) page and download
    `JARVIS-Voice-Agent-Setup-<version>.exe`.
