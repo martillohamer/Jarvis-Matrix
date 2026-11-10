@@ -1,35 +1,38 @@
-﻿# ==============================================================================
-# SCRIPT DE INICIO MAESTRO // JARVIS-MATRIX T-800
-# ==============================================================================
+﻿param(
+)
 
-Write-Host "==================================================" -ForegroundColor Cyan
-Write-Host "      INICIANDO CENTRO DE MANDO JARVIS-MATRIX     " -ForegroundColor Green
-Write-Host "==================================================" -ForegroundColor Cyan
+Write-Host "==================================================" -ForegroundColor Green
+Write-Host "       [ JARVIS - T-800 MATRIX PROTOCOL ]         " -ForegroundColor Cyan
+Write-Host "==================================================" -ForegroundColor Green
 
-# 1. Validar pasarela local en el puerto 3001
-Write-Host "[*] Comprobando pasarela local en http://localhost:3001..." -ForegroundColor Yellow
-$portCheck = Test-NetConnection -ComputerName localhost -Port 3001 -WarningAction SilentlyContinue
-
-if ($portCheck.TcpTestSucceeded) {
-    Write-Host "[OK] Pasarela local de IA (FreeLLMAPI) detectada y en línea." -ForegroundColor Green
+# 1. Check FreeLLMAPI Gateway (Port 3001)
+Write-Host "[*] Checking FreeLLMAPI Gateway on port 3001..." -ForegroundColor Yellow
+$gatewayCheck = Test-NetConnection -ComputerName localhost -Port 3001 -WarningAction SilentlyContinue
+if ($gatewayCheck.TcpTestSucceeded) {
+    Write-Host "[+] FreeLLMAPI Gateway is ONLINE (Port 3001)." -ForegroundColor Green
 } else {
-    Write-Host "[WARNING] El puerto 3001 no responde. Asegúrate de iniciar tu servicio local de IA." -ForegroundColor Yellow
+    Write-Host "[!] WARNING: FreeLLMAPI Gateway is NOT responding on port 3001!" -ForegroundColor Red
+    Write-Host "[!] Please ensure the FreeLLMAPI gateway is powered on/running." -ForegroundColor Yellow
 }
 
-# 2. Abrir la interfaz web principal
-$indexPath = "$PSScriptRoot\index.html"
-if (-not (Test-Path $indexPath)) {
-    $indexPath = "$PWD\index.html"
-}
+# 2. Check JARVIS Node.js Server (Port 3002)
+Write-Host "[*] Checking JARVIS server on port 3002..." -ForegroundColor Yellow
+$jarvisCheck = Test-NetConnection -ComputerName localhost -Port 3002 -WarningAction SilentlyContinue
 
-if (Test-Path $indexPath) {
-    Write-Host "[*] Desplegando interfaz gráfica de Jarvis-Matrix..." -ForegroundColor Cyan
-    Start-Process $indexPath
-    Write-Host "[OK] Interfaz abierta correctamente." -ForegroundColor Green
+if ($jarvisCheck.TcpTestSucceeded) {
+    Write-Host "[+] JARVIS server is already running on port 3002." -ForegroundColor Green
 } else {
-    Write-Host "[ERROR] No se encontró el archivo index.html en la ruta." -ForegroundColor Red
+    Write-Host "[*] JARVIS server not detected. Starting server.js..." -ForegroundColor Yellow
+    Start-Process powershell -ArgumentList "-NoExit -Command `"node server.js`"" -WorkingDirectory $PSScriptRoot
+    
+    Write-Host "[*] Waiting 2 seconds for server initialization..." -ForegroundColor Yellow
+    Start-Sleep -Seconds 2
 }
 
-Write-Host "==================================================" -ForegroundColor Cyan
-Write-Host "      SISTEMA OPERATIVO Y LISTO PARA OPERAR       " -ForegroundColor Cyan
-Write-Host "==================================================" -ForegroundColor Cyan
+# 3. Open Browser
+Write-Host "[*] Opening JARVIS in default browser (http://localhost:3002)..." -ForegroundColor Cyan
+Start-Process "http://localhost:3002"
+
+Write-Host "==================================================" -ForegroundColor Green
+Write-Host "       [ SYSTEM ONLINE - WELCOME BACK SIR ]       " -ForegroundColor Cyan
+Write-Host "==================================================" -ForegroundColor Green
