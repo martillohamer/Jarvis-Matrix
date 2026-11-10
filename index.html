@@ -12,22 +12,218 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/styles.css">
-  <script type="module">
-    import { JarvisAPI } from './assets/jarvis.js';
-    import { VoiceManager } from './assets/voice-manager.js';
+<script type="module">
+  import { JarvisAPI } from './assets/jarvis.js';
+  import { VoiceManager } from './assets/voice-manager.js';
+  
+  const jarvis = new JarvisAPI();
+  const voice = new VoiceManager();
+  voice.setLanguage('es-ES');
+  
+  let consoleOpen = false;
+  
+  function createConsole() {
+    const panel = document.createElement('div');
+    panel.className = 'console-panel';
+    panel.innerHTML = `
+      <div class="console-header">
+        <h3>JARVIS Console</h3>
+        <div style="display:flex;gap:8px;align-items:center">
+          <div class="state-indicator" id="api-status">
+            <span class="state-dot offline"></span>
+            <span>API</span>
+          </div>
+          <div class="state-indicator" id="voice-status">
+            <span class="state-dot offline"></span>
+            <span>Voice</span>
+          </div>
+          <button class="console-close" aria-label="Close console">&times;</button>
+        </div>
+      </div>
+      <div class="console-messages" id="console-messages">
+        <div class="msg system">Sistemas inicializados. Conectando a http://localhost:3001...</div>
+      </div>
+      <div class="console-input">
+        <input type="text" id="console-input" placeholder="Message JARVIS..." autocomplete="off">
+        <button id="console-send">Enviar</button>
+        <button class="speaker-btn" id="voice-toggle" title="Toggle voice">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
+        </button>
+      </div>
+    `;
+    document.body.appendChild(panel);
+    return panel;
+  }
+  
+  let apiOnline = false;
+  
+  
+  async function checkAPIStatus() {
+    const status = document.getElementById('api-status');
+    const dot = status?.querySelector('.state-dot');
+    try {
+      const ok = await jarvis.checkAvailability();
+      if (ok && dot) {
+        dot.className = 'state-dot online';
+        status.querySelector('span:last-child').textContent = 'API Online';
+        apiOnline = true;
+      } else if (dot && !apiOnline) {
+        dot.className = 'state-dot offline';
+        status.querySelector('span:last-child').textContent = 'API Offline';
+        addMessage('system', '✗ FreeLLMAPI no disponible. Inicia el servidor en puerto 3001');
+      }
+    } catch (e) {
+      if (dot && !apiOnline) dot.className = 'state-dot offline';
+    }
+  }
+  
+  function normalizeName(name) {
+    const lower = name.toLowerCase().trim();
+    if (lower === 'yarbis' || lower === 'yervis') return 'jarvis';
+    return lower;
+  }
+  
+  function addMessage(role, content) {
+    const container = document.getElementById('console-messages');
+    if (!container) return;
+    const msg = document.createElement('div');
+    msg.className = `msg ${role}`;
+    msg.textContent = content;
+    container.appendChild(msg);
+    container.scrollTop = container.scrollHeight;
+  }
+  
+  async function sendMessage(text, fromVoice = false) {
+    if (!text.trim()) return;
+    addMessage('user', text);
     
-    const jarvis = new JarvisAPI();
-    const voice = new VoiceManager();
-
-    // Conectar botón de voz a VoiceManager
-    document.querySelector('.btn-primary').addEventListener('click', async (e) => {
-      // Lógica de activación de voz
-      voice.listen((transcript) => {
-        console.log('User said:', transcript);
-      });
+    const thinkingMsg = document.createElement('div');
+    thinkingMsg.className = 'msg thinking';
+    thinkingMsg.textContent = 'Pensando...';
+    const container = document.getElementById('console-messages');
+    if (container) {
+      container.appendChild(thinkingMsg);
+      container.scrollTop = container.scrollHeight;
+    }
+    
+    try {
+      const response = await jarvis.chat(text);
+      if (container && thinkingMsg.parentNode) {
+        thinkingMsg.parentNode.removeChild(thinkingMsg);
+      }
+      addMessage('assistant', response);
+      
+      if (fromVoice) {
+        voice.speak(response);
+      } else {
+        const voiceToggle = document.getElementById('voice-toggle');
+        if (voiceToggle?.classList.contains('active')) {
+          voice.speak(response);
+        }
+      }
+    } catch (e) {
+      if (container && thinkingMsg.parentNode) {
+        thinkingMsg.parentNode.removeChild(thinkingMsg);
+      }
+      addMessage('system', `Error: ${e.message}`);
+    }
+  }
+  
+  // Voice state handlers
+  voice.on('onStart', () => {
+    const dot = document.getElementById('voice-status')?.querySelector('.state-dot');
+    const sphere = document.getElementById('voice-sphere');
+    if (dot) dot.className = 'state-dot listening';
+    if (sphere) sphere.classList.add('listening');
+  });
+  
+  voice.on('onEnd', () => {
+    const dot = document.getElementById('voice-status')?.querySelector('.state-dot');
+    const sphere = document.getElementById('voice-sphere');
+    if (dot) dot.className = 'state-dot online';
+    if (sphere) sphere.classList.remove('listening');
+  });
+  
+  voice.on('onSynthesisStart', () => {
+    const dot = document.getElementById('voice-status')?.querySelector('.state-dot');
+    const sphere = document.getElementById('voice-sphere');
+    if (dot) dot.className = 'state-dot speaking';
+    if (sphere) sphere.classList.add('speaking');
+  });
+  
+  voice.on('onSynthesisEnd', () => {
+    const dot = document.getElementById('voice-status')?.querySelector('.state-dot');
+    const sphere = document.getElementById('voice-sphere');
+    if (dot) dot.className = 'state-dot online';
+    if (sphere) sphere.classList.remove('speaking');
+  });
+  
+  voice.on('onError', (err) => {
+    const dot = document.getElementById('voice-status')?.querySelector('.state-dot');
+    const sphere = document.getElementById('voice-sphere');
+    if (dot) dot.className = 'state-dot offline';
+    if (sphere) sphere.classList.remove('listening', 'speaking');
+    addMessage('system', `Voice error: ${err.message}`);
+  });
+  
+  // Initialize on DOM ready
+  document.addEventListener('DOMContentLoaded', () => {
+    const panel = createConsole();
+    checkAPIStatus();
+    
+    // Voice sphere
+    const sphere = document.getElementById('voice-sphere');
+    sphere?.addEventListener('click', () => {
+      if (sphere.classList.contains('listening')) {
+        voice.stopListening();
+      } else {
+        voice.listen((transcript) => {
+          const input = panel.querySelector('#console-input');
+          if (input) input.value = transcript;
+          sendMessage(transcript, true);
+        });
+      }
     });
-  </script>
-</head>
+    
+    // Open console from hero button
+    document.querySelector('.btn-primary')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      panel.style.display = 'flex';
+      consoleOpen = true;
+    });
+    
+    // Close console
+    panel.querySelector('.console-close')?.addEventListener('click', () => {
+      panel.style.display = 'none';
+      consoleOpen = false;
+    });
+    
+    // Send message
+    const input = panel.querySelector('#console-input');
+    const sendBtn = panel.querySelector('#console-send');
+    const send = () => {
+      const text = input.value.trim();
+      if (text) {
+        sendMessage(text, false);
+        input.value = '';
+      }
+    };
+    
+    sendBtn?.addEventListener('click', send);
+    input?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') send();
+    });
+    
+    // Voice toggle
+    const voiceToggle = panel.querySelector('#voice-toggle');
+    voiceToggle?.addEventListener('click', () => {
+      voiceToggle.classList.toggle('active');
+    });
+    
+    // Periodic health check
+    setInterval(checkAPIStatus, 30000);
+  });
+</script>
 </head>
 <body>
 
@@ -52,7 +248,7 @@
         language — Jarvis replies in text and out loud, in that same language, with a native
         voice and his trademark dry wit. No account, no API key, no cloud, no telemetry.</p>
       <div class="cta">
-        <a class="btn btn-primary" href="https://github.com/Ale-Studios/JARVIS-Demo/releases/latest">⬇ Download for Windows</a>
+        <button class="btn btn-primary">⚡ Open Console</button>
         <a class="btn btn-ghost" href="#how">How it works</a>
       </div>
       <p class="cta-note">Windows 10 / 11 · installer · requires the free <a href="https://ollama.com" style="color:var(--blue-2)">Ollama</a> engine</p>
@@ -119,7 +315,7 @@
       <div class="steps">
         <div class="step"><h3>Install Ollama</h3><p>Install the free local AI engine from <a href="https://ollama.com" style="color:var(--blue-2)">ollama.com</a>, then pull the model once: <code>ollama pull qwen2.5:3b</code></p></div>
         <div class="step"><h3>Download Jarvis</h3><p>Grab <code>JARVIS-Voice-Agent-Setup.exe</code> from the releases page. The installer is per-user — no admin rights needed.</p></div>
-        <div class="step"><h3>Run &amp; talk</h3><p>Launch Jarvis from the Start menu. Type in any supported language, or open voice mode and hold Space to speak.</p></div>
+        <div class="step"><h3>Run & talk</h3><p>Launch Jarvis from the Start menu. Type in any supported language, or open voice mode and hold Space to speak.</p></div>
       </div>
       <div style="text-align:center;margin-top:34px">
         <a class="btn btn-ghost" href="https://github.com/Ale-Studios/JARVIS-Demo/blob/master/WELCOME.md">📖 Read the beginner guide</a>
@@ -193,6 +389,16 @@
     </div>
   </div>
 </footer>
+
+<!-- Voice Sphere -->
+<div id="voice-sphere" class="voice-sphere" title="Activar voz (Español)" aria-label="Voice activation">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+    <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+    <line x1="12" y1="19" x2="12" y2="23"></line>
+    <line x1="8" y1="23" x2="16" y2="23"></line>
+  </svg>
+</div>
 
 </body>
 </html>

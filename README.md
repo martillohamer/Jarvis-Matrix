@@ -55,9 +55,27 @@ things — the **chat** and the **advanced voice mode** — and nothing else.
 
 ### Arquitectura del Proyecto
 El proyecto sigue una arquitectura modular moderna bajo la carpeta `assets/`:
-- `assets/styles.css`: Estilos centralizados.
-- `assets/jarvis.js`: Lógica de comunicación con el gateway de IA (Ollama/API).
-- `assets/voice-manager.js`: Manejo de Web Speech API (reconocimiento y síntesis).
+- `assets/styles.css`: Estilos centralizados (base + console + voice sphere).
+- `assets/jarvis.js`: Cliente OpenAI-compatible para FreeLLMAPI en `http://localhost:3001/v1/chat/completions`.
+- `assets/voice-manager.js`: Web Speech API con soporte `es-ES`/`es-PY`, eventos visuales de estado.
+- `server.js`: Backend de automatización Node.js (puerto 3002) con endpoints `/api/health`, `/api/execute`.
+
+### Desarrollo Local
+```bash
+# Iniciar servidor de automatización (puerto 3002)
+node server.js
+
+# Iniciar JARVIS (verifica FreeLLMAPI + Ollama + abre interfaz)
+.\start-jarvis.ps1
+# o
+start-jarvis.bat
+```
+
+### Endpoints de Automatización
+| Endpoint | Método | Descripción |
+|----------|--------|-------------|
+| `/api/health` | GET | Health check del servidor |
+| `/api/execute` | POST | Ejecutar comandos locales (body: `{command, args}`) |
 
 1. Open the [**Releases**](../../releases/latest) page and download
    `JARVIS-Voice-Agent-Setup-<version>.exe`.
