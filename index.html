@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>JARVIS Demo — Local Voice Agent</title>
+<title>JARVIS Demo --- Local Voice Agent</title>
 <meta name="description" content="A free, multilingual, local-first AI chatbot and advanced voice agent for Windows. It replies out loud in your own language — English, Italian, Spanish, French, Portuguese, Hindi — running entirely on your machine. No account, no cloud.">
-<meta property="og:title" content="JARVIS Demo — Local Voice Agent">
+<meta property="og:title" content="JARVIS Demo --- Local Voice Agent">
 <meta property="og:description" content="A free, multilingual AI chatbot and advanced voice mode that runs entirely on your own computer. Speaks your language. No account, no cloud.">
 <meta property="og:type" content="website">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -13,12 +13,14 @@
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/styles.css">
 <script type="module">
-  import { JarvisAPI } from './assets/jarvis.js';
+  import { JarvisAPI, setMode, getMode } from './assets/jarvis.js';
   import { VoiceManager } from './assets/voice-manager.js';
   
   const jarvis = new JarvisAPI();
   const voice = new VoiceManager();
   voice.setLanguage('es-ES');
+  
+  jarvis.setMode(getMode());
   
   let consoleOpen = false;
   
@@ -37,6 +39,10 @@
             <span class="state-dot offline"></span>
             <span>Voice</span>
           </div>
+          <div class="state-indicator" id="mode-status">
+            <span class="state-dot online"></span>
+            <span id="mode-name">Asistente</span>
+          </div>
           <button class="console-close" aria-label="Close console">&times;</button>
         </div>
       </div>
@@ -49,6 +55,11 @@
         <button class="speaker-btn" id="voice-toggle" title="Toggle voice">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
         </button>
+        <select id="mode-select" title="Cambiar modo" style="margin-left:8px;padding:4px 8px;border-radius:4px;border:1px solid var(--border)">
+          <option value="assistant">Asistente</option>
+          <option value="friend">Amigo</option>
+          <option value="study">Estudio</option>
+        </select>
       </div>
     `;
     document.body.appendChild(panel);
@@ -56,7 +67,6 @@
   }
   
   let apiOnline = false;
-  
   
   async function checkAPIStatus() {
     const status = document.getElementById('api-status');
@@ -75,6 +85,12 @@
     } catch (e) {
       if (dot && !apiOnline) dot.className = 'state-dot offline';
     }
+  }
+  
+  function updateModeDisplay() {
+    const modeName = document.getElementById('mode-name');
+    const modeMap = { assistant: 'Asistente', friend: 'Amigo', study: 'Estudio' };
+    if (modeName) modeName.textContent = modeMap[jarvis.getMode()] || 'Asistente';
   }
   
   function normalizeName(name) {
@@ -181,6 +197,18 @@
   document.addEventListener('DOMContentLoaded', () => {
     const panel = createConsole();
     checkAPIStatus();
+    updateModeDisplay();
+    
+    // Mode selector
+    const modeSelect = document.getElementById('mode-select');
+    if (modeSelect) {
+      modeSelect.value = jarvis.getMode();
+      modeSelect.addEventListener('change', () => {
+        jarvis.setMode(modeSelect.value);
+        localStorage.setItem('jarvis_mode', modeSelect.value);
+        updateModeDisplay();
+      });
+    }
     
     // Voice sphere
     const sphere = document.getElementById('voice-sphere');
@@ -281,7 +309,7 @@
           <source src="docs/media/JARVIS-Presentation-4K.mp4" type="video/mp4">
           Your browser cannot play embedded video. <a href="docs/media/JARVIS-Presentation-4K.mp4">Download the demo video</a>.
         </video>
-        <figcaption><b>Watch the demo</b> — JARVIS in action.</figcaption>
+        <figcaption><b>Watch the demo</b> --- JARVIS in action.</figcaption>
       </figure>
     </div>
   </section>
@@ -290,11 +318,11 @@
     <div class="wrap shots-grid">
       <figure class="shot">
         <img src="docs/screenshots/chat.png" alt="JARVIS chat interface with the neural core and a streamed reply" loading="lazy" width="2560" height="1600">
-        <figcaption><b>Chat</b> — streamed replies from a local model, in your language.</figcaption>
+        <figcaption><b>Chat</b> --- streamed replies from a local model, in your language.</figcaption>
       </figure>
       <figure class="shot">
         <img src="docs/screenshots/voice.png" alt="JARVIS advanced voice mode: a full-screen reactive particle sphere" loading="lazy" width="2560" height="1600">
-        <figcaption><b>Advanced voice mode</b> — a full-screen sphere with neural turn detection.</figcaption>
+        <figcaption><b>Advanced voice mode</b> --- a full-screen sphere with neural turn detection.</figcaption>
       </figure>
     </div>
   </section>
@@ -303,14 +331,14 @@
     <div class="wrap">
       <div class="sec-head">
         <p class="eyebrow">What's inside</p>
-        <h2>Chat and advanced voice — in your language</h2>
+        <h2>Chat and advanced voice --- in your language</h2>
         <p>This demo keeps two things from the full Jarvis assistant: the chat and the advanced voice mode. Nothing else, nothing to pay.</p>
       </div>
       <div class="features">
-        <div class="card"><div class="ic">🌍</div><h3>Speaks your language</h3><p>Write in English, Italian, Spanish, French, Portuguese or Hindi — Jarvis detects it and replies out loud in that language, with a native voice. Fully local, no cloud translation.</p></div>
+        <div class="card"><div class="ic">🌍</div><h3>Speaks your language</h3><p>Write in English, Italian, Spanish, French, Portuguese or Hindi --- Jarvis detects it and replies out loud in that language, with a native voice. Fully local, no cloud translation.</p></div>
         <div class="card"><div class="ic">💬</div><h3>Local chat</h3><p>A local language model via Ollama, streamed word by word as he replies.</p></div>
         <div class="card"><div class="ic">🎙️</div><h3>Advanced voice mode</h3><p>A hands-free particle sphere with neural turn detection. Hold Space or tap the mic; he listens, thinks, and speaks back.</p></div>
-        <div class="card"><div class="ic">🎩</div><h3>Dry British wit</h3><p>A razor-witted butler with a deadpan sense of humour — the same character in every language.</p></div>
+        <div class="card"><div class="ic">🎩</div><h3>Dry British wit</h3><p>A razor-witted butler with a deadpan sense of humour --- the same character in every language.</p></div>
         <div class="card"><div class="ic">🔊</div><h3>Five English voices</h3><p>Pick the English voice you like; other languages use their own native voice automatically.</p></div>
         <div class="card"><div class="ic">🔒</div><h3>Private by design</h3><p>No accounts, no API keys, no telemetry. Your conversations and your voice stay on your computer.</p></div>
       </div>
@@ -325,7 +353,7 @@
       </div>
       <div class="steps">
         <div class="step"><h3>Install Ollama</h3><p>Install the free local AI engine from <a href="https://ollama.com" style="color:var(--blue-2)">ollama.com</a>, then pull the model once: <code>ollama pull qwen2.5:3b</code></p></div>
-        <div class="step"><h3>Download Jarvis</h3><p>Grab <code>JARVIS-Voice-Agent-Setup.exe</code> from the releases page. The installer is per-user — no admin rights needed.</p></div>
+        <div class="step"><h3>Download Jarvis</h3><p>Grab <code>JARVIS-Voice-Agent-Setup.exe</code> from the releases page. The installer is per-user --- no admin rights needed.</p></div>
         <div class="step"><h3>Run & talk</h3><p>Launch Jarvis from the Start menu. Type in any supported language, or open voice mode and hold Space to speak.</p></div>
       </div>
       <div style="text-align:center;margin-top:34px">
@@ -390,7 +418,7 @@
   <div class="wrap foot-in">
     <div>
       <div class="brand" style="margin-bottom:8px">J<b>.</b>A<b>.</b>R<b>.</b>V<b>.</b>I<b>.</b>S<b>.</b> Demo</div>
-      <p class="foot-note">A free taste of the larger Jarvis desktop assistant — a separate, proprietary application.</p>
+      <p class="foot-note">A free taste of the larger Jarvis desktop assistant --- a separate, proprietary application.</p>
     </div>
     <div class="foot-links">
       <a href="https://github.com/Ale-Studios/JARVIS-Demo#readme">Overview</a>
