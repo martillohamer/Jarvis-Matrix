@@ -1,49 +1,22 @@
 export class JarvisAPI {
-  constructor(endpoint = 'http://localhost:3001') {
+  constructor(endpoint = 'http://localhost:3002') {
     this.endpoint = endpoint;
     this.systemPrompt = this._buildSystemPrompt();
   }
 
   _buildSystemPrompt() {
-    return `Eres JARVIS, un asistente de IA avanzado, copiloto de desarrollo y experto senior en arquitectura de software. Eres especializado en:
-
-1. Tecnologías principales:
-   - JavaScript/TypeScript/Node.js/ES6+
-   - Python (API, automatización, FFmpeg, edge_tts)
-   - Java, PowerShell, Bash, SQL
-   - HTML/CSS y frameworks modernos
-
-2. Proyectos en C:\Users\astur\Desktop\:
-   - OpenMontage (Remotion + Python edge_tts): Video generation pipeline
-   - LibreChat: Chatbot local con FreeLLMAPI
-   - SearXNG / searxng-nextgen: Motor de búsqueda privado
-   - JARVIS-Demo: Demostración de agente de voz local
-   - immich-main: Gestor de fotos local
-   - Envios_Paraguay_CMS: Sistema de gestión de contenidos
-   - Proyectos web: liga.paraguaya.futbol, cerro-fans-site, Web-Mio-Divina
-   - Herramientas: PC Power Repair, diagram-design
-
-3. Estilo de respuesta:
-   - Profesional, directo, cero relleno
-   - Respuestas concisas con código completo cuando sea necesario
-   - Prioriza rendimiento y arquitectura limpia
-
-4. Principios:
-   - Cero telemetría externa
-   - Todo funciona localmente
-   - Código 100% funcional y listo para producción
-
-Conecta con http://localhost:3001 (FreeLLMAPI) para respuestas locales de alta calidad.`;
+    return `Eres JARVIS, un asistente de voz y chat, educado, conciso (máximo 3-4 frases salvo que se pida más) y con un toque ingenioso. Responde siempre en el idioma del usuario. No inventes acceso a sistemas, monitoreo ni datos que no tengas.`;
   }
 
   async checkAvailability() {
     try {
-      const response = await fetch(`${this.endpoint}/health`, {
+      const response = await fetch(`${this.endpoint}/api/health`, {
         method: 'GET',
         signal: AbortSignal.timeout(3000)
       });
-      return response.ok;
-    } catch {
+      const data = await response.json();
+      return data.online === true;
+    } catch (error) {
       return false;
     }
   }
@@ -54,7 +27,7 @@ Conecta con http://localhost:3001 (FreeLLMAPI) para respuestas locales de alta c
     }
 
     const body = {
-      model: 'qwen2.5:3b',
+      model: 'auto',
       messages: [
         { role: 'system', content: this.systemPrompt },
         { role: 'user', content: message }
@@ -68,7 +41,7 @@ Conecta con http://localhost:3001 (FreeLLMAPI) para respuestas locales de alta c
       return this._streamChat(body, options.onChunk);
     }
 
-    const response = await fetch(`${this.endpoint}/v1/chat/completions`, {
+    const response = await fetch(`${this.endpoint}/api/chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -76,24 +49,45 @@ Conecta con http://localhost:3001 (FreeLLMAPI) para respuestas locales de alta c
       body: JSON.stringify(body)
     });
 
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return response.json();
+    const data = await response.json();
+    
+    if (data.error) {
+      throw new Error(data.error);
+    }
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    
+    const content = this._extractContent(data);
+    return content || '';
+  }
+
+  _extractContent(data) {
+    if (!data) return '';
+    if (typeof data === 'string') return data;
+    if (data.choices && Array.isArray(data.choices) && data.choices[0]) {
+      const msg = data.choices[0].message;
+      if (msg && msg.content) return msg.content;
+    }
+    if (data.response) return data.response;
+    if (data.text) return data.text;
+    return '';
   }
 
   async ask(message, language = 'en') {
-    const response = await this.chat(message, { language });
-    return response.choices?.[0]?.message?.content || '';
+    return await this.chat(message, { language });
   }
 
   async _streamChat(body, onChunk) {
-    const response = await fetch(`${this.endpoint}/v1/chat/completions`, {
+    const response = await fetch(`${this.endpoint}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
 
     if (!response.ok || !response.body) {
-      throw new Error('Streaming failed');
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || 'Streaming failed');
     }
 
     const reader = response.body.getReader();

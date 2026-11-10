@@ -18,7 +18,7 @@
 }
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
-body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden;min-height:100vh;width:100%}
 a{color:inherit}
 .wrap{max-width:var(--maxw);margin:0 auto;padding:0 20px}
 .eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.32em;text-transform:uppercase;color:var(--blue-2);margin:0 0 14px}
@@ -95,3 +95,42 @@ footer{border-top:1px solid rgba(255,255,255,.06);padding:40px 0;color:var(--fai
 .foot-links a{text-decoration:none;color:var(--muted)}
 .foot-links a:hover{color:var(--blue-2)}
 .foot-note{font-family:var(--mono);font-size:.75rem;max-width:520px}
+
+/* Console & Voice States */
+:root{
+  --state-offline: #8b5cf6;
+  --state-online: #10b981;
+  --state-speaking: #f59e0b;
+  --state-listening: #3b82f6;
+  --panel-light: rgba(255,255,255,.05);
+}
+.state-indicator{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:.85rem}
+.state-dot{width:10px;height:10px;border-radius:50%;animation:pulse 1.5s infinite}
+.state-dot.offline{background:var(--state-offline)}
+.state-dot.online{background:var(--state-online)}
+.state-dot.speaking{background:var(--state-speaking)}
+.state-dot.listening{background:var(--state-listening)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.console-panel{position:fixed;top:80px;right:24px;width:380px;background:var(--bg-2);border:1px solid var(--panel-brd);border-radius:var(--radius);box-shadow:0 30px 60px -30px rgba(0,0,0,.85);z-index:100;overflow:hidden;display:flex;flex-direction:column}
+.console-header{padding:12px 16px;border-bottom:1px solid var(--panel-brd);display:flex;align-items:center;justify-content:space-between}
+.console-header h3{margin:0;font-size:1rem;color:var(--ink)}
+.console-close{background:none;border:none;color:var(--muted);cursor:pointer;font-family:var(--mono);font-size:1.2rem}
+.console-messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px}
+.msg{border-radius:var(--radius);padding:12px 14px;max-width:85%;word-wrap:break-word;font-family:var(--mono);font-size:.88rem}
+.msg.user{background:var(--blue-soft);align-self:flex-end;border-bottom-right-radius:4px}
+.msg.assistant{background:var(--panel);align-self:flex-start;border-bottom-left-radius:4px}
+.msg.system{background:rgba(0,0,0,.3);align-self:center;font-size:.8rem;color:var(--faint)}
+.console-input{padding:12px 16px;border-top:1px solid var(--panel-brd);display:flex;gap:8px;align-items:center}
+.console-input input{flex:1;padding:10px 12px;border:1px solid var(--panel-brd);border-radius:999px;background:var(--bg-2);color:var(--ink);font-family:var(--mono);font-size:.9rem}
+.console-input button{padding:0 20px;border:1px solid var(--panel-brd);border-radius:999px;background:var(--panel);color:var(--ink);cursor:pointer;font-family:var(--mono);transition:.18s}
+.console-input button:hover{background:var(--blue-soft)}
+.speaker-btn{background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.1rem;padding:4px;display:flex;align-items:center;gap:4px}
+.speaker-btn.active{color:var(--blue-2)}
+
+/* Voice Sphere Visual */
+.voice-sphere{position:fixed;bottom:24px;right:24px;width:120px;height:120px;border-radius:50%;background:radial-gradient(circle at 30% 30%,var(--blue-soft),transparent 70%);border:1px solid var(--panel-brd);display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:90;transition:transform .3s,box-shadow .3s}
+.voice-sphere:hover{transform:scale(1.1);box-shadow:0 0 40px var(--glow)}
+.voice-sphere.listening{animation:pulse-ring 1s infinite;box-shadow:0 0 30px var(--state-listening)}
+.voice-sphere.speaking{animation:pulse-ring 1s infinite;box-shadow:0 0 30px var(--state-speaking)}
+@keyframes pulse-ring{0%{box-shadow:0 0 0 0 var(--state-listening)}70%{box-shadow:0 0 0 20px transparent}100%{box-shadow:0 0 0 0 transparent}}
+.voice-sphere svg{width:48px;height:48px;color:var(--blue-2)}
