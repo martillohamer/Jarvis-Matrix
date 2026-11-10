@@ -39,9 +39,18 @@
             <span class="state-dot offline"></span>
             <span>Voice</span>
           </div>
-          <div class="state-indicator" id="mode-status">
+          <div class="state-indicator" id="jarvis-status">
             <span class="state-dot online"></span>
-            <span id="mode-name">Asistente</span>
+            <span>Jarvis</span>
+          </div>
+          <div class="state-indicator" id="freellm-status">
+            <span class="state-dot offline"></span>
+            <span>FreeLLM</span>
+          </div>
+          <div style="display:flex;gap:4px;align-items:center;margin-left:8px">
+            <span style="font-size:12px;color:var(--muted)">CPU: <span id="hud-cpu">--%</span></span>
+            <span style="font-size:12px;color:var(--muted)">RAM: <span id="hud-ram">--%</span></span>
+            <span style="font-size:12px;color:var(--muted)">D: <span id="hud-disk">--%</span></span>
           </div>
           <button class="console-close" aria-label="Close console">&times;</button>
         </div>
@@ -84,6 +93,35 @@
       }
     } catch (e) {
       if (dot && !apiOnline) dot.className = 'state-dot offline';
+    }
+  }
+  
+  async function updateHUD() {
+    try {
+      const res = await fetch(`${jarvis.endpoint}/api/system-status`);
+      const data = await res.json();
+      
+      const jarvisDot = document.getElementById('jarvis-status')?.querySelector('.state-dot');
+      if (jarvisDot) jarvisDot.className = data.services?.find(s => s.port === 3002)?.up ? 'state-dot online' : 'state-dot offline';
+      
+      const fllmmDot = document.getElementById('freellm-status')?.querySelector('.state-dot');
+      if (fllmmDot) fllmmDot.className = data.services?.find(s => s.port === 3001)?.up ? 'state-dot online' : 'state-dot offline';
+      
+      const cpuEl = document.getElementById('hud-cpu');
+      if (cpuEl) cpuEl.textContent = `${data.cpu}%`;
+      
+      const ramEl = document.getElementById('hud-ram');
+      if (ramEl) ramEl.textContent = `${data.ramUsed}%`;
+      
+      const diskPct = data.diskTotal > 0 ? Math.round(100 * (1 - data.diskFree / data.diskTotal)) : 0;
+      const diskEl = document.getElementById('hud-disk');
+      if (diskEl) diskEl.textContent = `${diskPct}%`;
+      
+      if (jarvisDot && jarvisDot.className !== 'state-dot online' && jarvisDot.className !== 'state-dot online') {
+        voice.speak('Alerta: el servidor JARVIS está caído');
+      }
+    } catch (e) {
+      console.error('HUD update error:', e);
     }
   }
   
@@ -261,6 +299,10 @@
     
     // Periodic health check
     setInterval(checkAPIStatus, 30000);
+    
+    // HUD polling every 10 seconds
+    setInterval(updateHUD, 10000);
+    updateHUD();  // Initial HUD update
   });
 </script>
 </head>
@@ -270,10 +312,10 @@
   <div class="wrap nav-in">
     <div class="brand">J<b>.</b>A<b>.</b>R<b>.</b>V<b>.</b>I<b>.</b>S<b>.</b> <span style="color:var(--faint)">DEMO</span></div>
     <nav class="nav-links">
-      <a href="#features">Features</a>
-      <a href="#how">How it works</a>
-      <a href="#requirements">Requirements</a>
-      <a href="https://github.com/Ale-Studios/JARVIS-Demo">GitHub</a>
+      <a href="#features">Características</a>
+      <a href="#how">Cómo funciona</a>
+      <a href="#requirements">Requisitos</a>
+      <a href="https://github.com/martillohamer/Jarvis-Matrix">GitHub</a>
     </nav>
   </div>
 </header>
@@ -290,7 +332,7 @@
         <button class="btn btn-primary">⚡ Open Console</button>
         <a class="btn btn-ghost" href="#how">How it works</a>
       </div>
-      <p class="cta-note">Windows 10 / 11 · installer · requires the free <a href="https://ollama.com" style="color:var(--blue-2)">Ollama</a> engine</p>
+      <p class="cta-note">Windows 10 / 11 · requiere el modelo local (ya incluido en el servidor)</p>
       <div class="langs">
         <span class="lang">🇬🇧 English</span>
         <span class="lang">🇮🇹 Italiano</span>
@@ -327,37 +369,29 @@
     </div>
   </section>
 
-  <section id="features">
-    <div class="wrap">
-      <div class="sec-head">
-        <p class="eyebrow">What's inside</p>
-        <h2>Chat and advanced voice --- in your language</h2>
-        <p>This demo keeps two things from the full Jarvis assistant: the chat and the advanced voice mode. Nothing else, nothing to pay.</p>
-      </div>
-      <div class="features">
-        <div class="card"><div class="ic">🌍</div><h3>Speaks your language</h3><p>Write in English, Italian, Spanish, French, Portuguese or Hindi --- Jarvis detects it and replies out loud in that language, with a native voice. Fully local, no cloud translation.</p></div>
-        <div class="card"><div class="ic">💬</div><h3>Local chat</h3><p>A local language model via Ollama, streamed word by word as he replies.</p></div>
-        <div class="card"><div class="ic">🎙️</div><h3>Advanced voice mode</h3><p>A hands-free particle sphere with neural turn detection. Hold Space or tap the mic; he listens, thinks, and speaks back.</p></div>
-        <div class="card"><div class="ic">🎩</div><h3>Dry British wit</h3><p>A razor-witted butler with a deadpan sense of humour --- the same character in every language.</p></div>
-        <div class="card"><div class="ic">🔊</div><h3>Five English voices</h3><p>Pick the English voice you like; other languages use their own native voice automatically.</p></div>
-        <div class="card"><div class="ic">🔒</div><h3>Private by design</h3><p>No accounts, no API keys, no telemetry. Your conversations and your voice stay on your computer.</p></div>
-      </div>
-    </div>
-  </section>
+<section class="features">
+        <div class="card"><div class="ic">🌍</div><h3>Multi-idioma</h3><p>JARVIS detecta y responde en tu idioma: Inglés, Italiano, Español, Francés, Portugués y Hindi. Voz local sin traducción en la nube.</p></div>
+        <div class="card"><div class="ic">⚡</div><h3>Comandos locales instantáneos</h3><p>Hora, clima (Oviedo), abrir YouTube/Netflix/Spotify/Disney, y apagado seguro con confirmación por voz.</p></div>
+        <div class="card"><div class="ic">🎙️</div><h3>Modo voz avanzado</h3><p>Esfera de partículas con detección neural. Habla o mantén pulsada la barra espaciadora.</p></div>
+        <div class="card"><div class="ic">🧠</div><h3>IA local</h3><p>Respuestas mediante FreeLLMAPI con modelo qwen2.5:3b, totalmente offline.</p></div>
+        <div class="card"><div class="ic">📊</div><h3>HUD de sistema</h3><p>Monitor CPU, RAM, disco y estado de servicios con alertas por voz en tiempo real.</p></div>
+        <div class="card"><div class="ic">🎓</div><h3>Modos especializados</h3><p>Asistente, Amigo y Estudio DAW (Java, SQL, entornos de desarrollo con preguntas pedagógicas).</p></div>
+        <div class="card"><div class="ic">🔒</div><h3>Privacidad total</h3><p>Sin cuentas, sin API keys, sin telemetría. Todo funciona localmente.</p></div>
+      </section>
 
   <section id="how" style="background:var(--bg-2)">
     <div class="wrap">
       <div class="sec-head">
         <p class="eyebrow">Get started in minutes</p>
-        <h2>Three steps to talking with Jarvis</h2>
+        <h2>Tres pasos para hablar con JARVIS</h2>
       </div>
       <div class="steps">
-        <div class="step"><h3>Install Ollama</h3><p>Install the free local AI engine from <a href="https://ollama.com" style="color:var(--blue-2)">ollama.com</a>, then pull the model once: <code>ollama pull qwen2.5:3b</code></p></div>
-        <div class="step"><h3>Download Jarvis</h3><p>Grab <code>JARVIS-Voice-Agent-Setup.exe</code> from the releases page. The installer is per-user --- no admin rights needed.</p></div>
-        <div class="step"><h3>Run & talk</h3><p>Launch Jarvis from the Start menu. Type in any supported language, or open voice mode and hold Space to speak.</p></div>
+        <div class="step"><h3>Arrancar FreeLLMAPI</h3><p>Inicia la pasarela local de IA en el puerto 3001: <code>localhost:3001</code>.</p></div>
+        <div class="step"><h3>Iniciar Servidor JARVIS</h3><p>Ejecuta <code>node server.js</code> en tu terminal para levantar el backend proxy y sistema de comandos en el puerto 3002 (<code>localhost:3002</code>).</p></div>
+        <div class="step"><h3>Abrir y Hablar</h3><p>Accede a <code>http://localhost:3002</code>, abre la consola interactiva o interactúa con la esfera de voz.</p></div>
       </div>
       <div style="text-align:center;margin-top:34px">
-        <a class="btn btn-ghost" href="https://github.com/Ale-Studios/JARVIS-Demo/blob/master/WELCOME.md">📖 Read the beginner guide</a>
+        <a class="btn btn-ghost" href="https://github.com/martillohamer/Jarvis-Matrix">📖 Documentación</a>
       </div>
     </div>
   </section>
@@ -397,7 +431,7 @@
           <li>No telemetry</li>
           <li>No auto-update</li>
         </ul>
-        <p style="color:var(--muted);margin-top:22px">The model runs locally through Ollama and the voice runs on-device. The only network use is the one-time model downloads and your own prompts going to Ollama on your machine.</p>
+        <p style="color:var(--muted);margin-top:22px">El procesamiento se realiza localmente a través de la pasarela proxy Node.js y FreeLLMAPI (puerto 3001), mientras que la síntesis y reconocimiento de voz se ejecutan en el propio navegador/dispositivo. Ningún dato personal sale de tu red local.</p>
       </div>
     </div>
   </section>
