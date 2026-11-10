@@ -107,6 +107,17 @@
     }
     
     try {
+      const cmdResult = await jarvis.checkCommand(text);
+      
+      if (cmdResult.handled) {
+        if (container && thinkingMsg.parentNode) {
+          thinkingMsg.parentNode.removeChild(thinkingMsg);
+        }
+        addMessage('assistant', cmdResult.reply);
+        voice.speak(cmdResult.reply);
+        return;
+      }
+      
       const response = await jarvis.chat(text);
       if (container && thinkingMsg.parentNode) {
         thinkingMsg.parentNode.removeChild(thinkingMsg);

@@ -21,6 +21,19 @@ export class JarvisAPI {
     }
   }
 
+  async checkCommand(text) {
+    try {
+      const response = await fetch(`${this.endpoint}/api/command`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text })
+      });
+      return await response.json();
+    } catch (error) {
+      return { handled: false };
+    }
+  }
+
   async chat(message, options = {}) {
     if (!await this.checkAvailability()) {
       throw new Error('FreeLLMAPI no disponible en ' + this.endpoint);
