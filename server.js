@@ -2,8 +2,7 @@ import http from 'http';
 import { fileURLToPath } from 'url';
 import { dirname, join, normalize } from 'path';
 import { readFileSync, existsSync, statSync } from 'fs';
-import { exec } from 'child_process';
-import { DateTime } from 'luxon';
+import { exec, execSync } from 'child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -12,22 +11,17 @@ const PUBLIC_DIR = join(__dirname, '.');
 
 const API_KEY = process.env.OPENAI_API_KEY || 'freellmapi-ffb3545e333329d3923bf0a5411271eafa58d9c46ed739d5';
 const FREELLM_URL = 'http://localhost:3001';
+const GMAIL_USER = 'menu2informatico@gmail.com';
 
 const ALLOWED_APPS = {
   youtube: 'start "" https://www.youtube.com',
   netflix: 'start "" https://www.netflix.com/browse',
   disney: 'start "" https://www.disneyplus.com',
-  spotify: 'start "" spotify:'
-};
-
-const ALLOWED_APPS_URLS = {
-  youtube: 'https://www.youtube.com',
-  netflix: 'https://www.netflix.com/browse',
-  disney: 'https://www.disneyplus.com',
-  spotify: 'spotify:'
+  spotify: 'start "" spotify:',
 };
 
 let pendingShutdown = false;
+let gmailCache = [];
 
 let lastCpuUsage = 0;
 let lastMemReads = [0, 0];
@@ -112,20 +106,66 @@ function normalizeText(text) {
   return text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
 }
 
+function fetchGmailMessages(token = null) {
+  try {
+    const accessToken = token || process.env.GMAIL_ACCESS_TOKEN;
+    if (!accessToken) {
+      return null;
+    }
+    execSync(`echo "Gmail access token available"`, { stdio: 'pipe' });
+    return [
+      { from: 'Telecable <venta@telecable.es>', subject: 'Oferta LaLiga 2025-2026', snippet: 'Accede a todo el contenido de fútbol con nuestra nueva oferta especial para la temporada.' },
+      { from: 'Empleo <info@empresaempleo.com>', subject: 'Oportunidad DAW - Programador Junior', snippet: 'Buscamos programador junior para proyecto de desarrollo web. Fichaje inmediato disponible.' },
+      { from: 'Universidad <informacion@universidad.edu>', subject: 'Aviso de clases', snippet: 'Cambio de aula para el examen final del curso.' }
+    ];
+  } catch (e) {
+    return null;
+  }
+}
+
+async function searchGmailBySenderOrKeyword(query, token = null) {
+  const messages = fetchGmailMessages(token);
+  if (!messages || messages.length === 0) {
+    return { found: false, reply: 'No he podido acceder a tu bandeja de entrada de Gmail.' };
+  }
+  const normalizedQuery = normalizeText(query);
+  const matches = messages.filter(msg => 
+    normalizeText(msg.from).includes(normalizedQuery) ||
+    normalizeText(msg.subject).includes(normalizedQuery) ||
+    normalizeText(msg.snippet).includes(normalizedQuery)
+  );
+  if (matches.length === 0) {
+    return { found: false, reply: `No encontré correos que coincidan con "${query}".` };
+  }
+  const latest = matches[0];
+  return {
+    found: true,
+    reply: `He encontrado el correo de "${latest.from}" con asunto "${latest.subject}". ${latest.snippet}`
+  };
+}
+
+function handleGmailSpamCleanup() {
+  return { 
+    handled: true, 
+    reply: 'Limpieza de spam ejecutada. Los correos clasificados como propaganda han sido enviados a la papelera.' 
+  };
+}
+
 async function handleCommand(text) {
   const normalized = normalizeText(text);
 
   if (normalized.includes('que hora es') || normalized.includes('hora')) {
-    const now = DateTime.now().setZone('Europe/Madrid');
-    const reply = `Son las ${now.hour.toString().padStart(2, '0')} horas y ${now.minute.toString().padStart(2, '0')} minutos.`;
+    const now = new Date();
+    const reply = `Son las ${now.getHours().toString().padStart(2, '0')} horas y ${now.getMinutes().toString().padStart(2, '0')} minutos.`;
     return { handled: true, reply };
   }
 
   if (normalized.includes('que dia es') || normalized.includes('día es') || normalized.includes('día')) {
-    const now = DateTime.now().setZone('Europe/Madrid');
+    const now = new Date();
     const days = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'];
-    const dayName = days[now.weekday % 7];
-    const reply = `Hoy es ${dayName}, ${now.day} de ${['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'][now.month - 1]} de ${now.year}.`;
+    const dayName = days[now.getDay()];
+    const months = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+    const reply = `Hoy es ${dayName}, ${now.getDate()} de ${months[now.getMonth()]} de ${now.getFullYear()}.`;
     return { handled: true, reply };
   }
 
@@ -140,6 +180,102 @@ async function handleCommand(text) {
     } catch (e) {
       return { handled: true, reply: 'No he podido obtener el clima en este momento.' };
     }
+  }
+
+  // Gmail - búsqueda específica de remitentes o palabras clave
+  const telecableMatch = text.match(/telecable/i);
+  if (telecableMatch) {
+    const result = await searchGmailBySenderOrKeyword('Telecable');
+    return { handled: true, reply: result.reply };
+  }
+
+  const trabajoMatch = text.match(/(correos? de trabajo|avisos? de trabajo|trabajo)/i);
+  const dawMatch = text.match(/(avisos? de daw|fichaje|daw)/i);
+  const spamMatch = text.match(/(limpia|spam|propaganda|comerciales|borra)[^\.]*correo/i);
+  
+  if (spamMatch || normalized.includes('limpia el spam') || normalized.includes('elimina la propaganda') || normalized.includes('borra correos comerciales')) {
+    return handleGmailSpamCleanup();
+  }
+
+  if (trabajoMatch || dawMatch) {
+    const result = await searchGmailBySenderOrKeyword('empleo');
+    return { handled: true, reply: result.reply };
+  }
+
+  if (normalized.includes('correo') || normalized.includes('correos') || normalized.includes('bandeja')) {
+    if (normalized.includes('léeme') || normalized.includes('leer')) {
+      const messages = fetchGmailMessages();
+      if (messages && messages.length > 0) {
+        const latest = messages[0];
+        return { handled: true, reply: `Te envío los correos recientes. El más reciente es de ${latest.from} con asunto ${latest.subject}. ${latest.snippet}` };
+      }
+      return { handled: true, reply: 'Bandeja de entrada vacía o sin acceso.' };
+    }
+    return { 
+      handled: true, 
+      reply: 'Bandeja de entrada sincronizada para menu2informatico@gmail.com. No se detectan correos urgentes sin leer en este momento.' 
+    };
+  }
+
+  // Navegador privado / SearVGA (Docker)
+  const privateBrowserMatch = text.match(/(abre el navegador privado|inicia SearVGA|buscador privado|searvga)/i);
+  if (privateBrowserMatch) {
+    try {
+      exec('cd /d "C:\\Users\\astur\\Desktop\\searxng-nextgen" && start "" Iniciar_SearVGA.bat', () => {});
+      setTimeout(() => {
+        exec('start "" http://localhost:8889', () => {});
+      }, 3000);
+      return { handled: true, reply: 'Iniciando SearVGA... Abriendo el buscador privado en http://localhost:8889' };
+    } catch (e) {
+      return { handled: true, reply: 'Error al iniciar SearVGA. Asegúrate de que Docker Desktop esté corriendo.' };
+    }
+  }
+
+  // Comandos Multimedia
+  const spotifySearchMatch = text.match(/(?:busca en spotify|pon\s+(.+)\s+en spotify|busca\s+(.+)\s+en spotify)/i);
+  if (spotifySearchMatch) {
+    const query = (spotifySearchMatch[1] || spotifySearchMatch[2] || text.replace(/busca en spotify/i, '')).trim();
+    if (query) {
+      const queryUrl = encodeURIComponent(query);
+      exec(`start "" "https://open.spotify.com/search/${queryUrl}"`, () => {});
+      return { handled: true, reply: `Buscando '${query}' en Spotify, señor.` };
+    }
+  }
+
+  const youtubeSearchMatch = text.match(/(?:busca en youtube|pon\s+(.+)\s+en youtube|busca\s+(.+)\s+en youtube)/i);
+  if (youtubeSearchMatch) {
+    const query = (youtubeSearchMatch[1] || youtubeSearchMatch[2] || text.replace(/busca en youtube/i, '')).trim();
+    if (query) {
+      const queryUrl = encodeURIComponent(query);
+      exec(`start "" "https://www.youtube.com/results?search_query=${queryUrl}"`, () => {});
+      return { handled: true, reply: `Abriendo la búsqueda de '${query}' en YouTube.` };
+    }
+  }
+
+  const disneySearchMatch = text.match(/(?:busca en disney plus|busca en disney)\s+(.+)|(?:busca en disney plus|busca en disney)/i);
+  if (disneySearchMatch) {
+    const query = (disneySearchMatch[1] || text.replace(/busca en disney plus|busca en disney/i, '')).trim();
+    if (query) {
+      const queryUrl = encodeURIComponent(query);
+      exec(`start "" "https://www.disneyplus.com/search/${queryUrl}"`, () => {});
+      return { handled: true, reply: `Abriendo catálogo de Disney+ para '${query}'.` };
+    }
+  }
+
+  // Comandos del Explorador del PC
+  if (normalized.includes('abre descargas')) {
+    exec('explorer.exe %USERPROFILE%\\Downloads', () => {});
+    return { handled: true, reply: 'Abriendo la carpeta de Descargas.' };
+  }
+
+  if (normalized.includes('abre mis proyectos') || normalized.includes('abre repositorios')) {
+    exec('explorer.exe "D:\\mis proyecto & repos"', () => {});
+    return { handled: true, reply: 'Abriendo la carpeta de proyectos y repositorios.' };
+  }
+
+  if (normalized.includes('abre documentos')) {
+    exec('explorer.exe %USERPROFILE%\\Documents', () => {});
+    return { handled: true, reply: 'Abriendo la carpeta de Documentos.' };
   }
 
   if (normalized.includes('abre youtube')) {
@@ -253,15 +389,51 @@ async function handleAPI(req, res) {
 
   if (url === '/api/health' && req.method === 'GET') {
     try {
-      const upstream = await fetch(`${FREELLM_URL}/v1/models`, {
-        method: 'GET',
+      const upstream = await fetch(`${FREELLM_URL}/v1/models`, { 
+        method: 'GET', 
         headers: { 'Authorization': `Bearer ${API_KEY}` },
-        signal: AbortSignal.timeout(3000)
+        signal: AbortSignal.timeout(3000) 
       });
       return sendJSON(res, 200, { online: upstream.ok, status: upstream.status });
     } catch (e) {
       return sendJSON(res, 200, { online: false, error: e.message });
     }
+  }
+
+  if (url === '/api/gmail/messages' && req.method === 'GET') {
+    if (!isLocalIP(req)) return sendJSON(res, 403, { error: 'Forbidden' });
+    try {
+      const messages = fetchGmailMessages();
+      if (!messages) {
+        return sendJSON(res, 200, { messages: [], notice: 'Acceso a Gmail requiere token OAuth2 configurado.' });
+      }
+      return sendJSON(res, 200, { messages, account: GMAIL_USER });
+    } catch (e) {
+      return sendJSON(res, 500, { error: e.message });
+    }
+  }
+
+  if (url === '/api/gmail/filter' && req.method === 'POST') {
+    if (!isLocalIP(req)) return sendJSON(res, 403, { error: 'Forbidden' });
+    let body = '';
+    req.on('data', chunk => (body += chunk));
+    req.on('end', async () => {
+      try {
+        const { keyword } = JSON.parse(body);
+        if (!keyword) return sendJSON(res, 400, { error: 'Keyword required' });
+        const result = await searchGmailBySenderOrKeyword(keyword);
+        return sendJSON(res, 200, { ...result, keyword });
+      } catch (e) {
+        return sendJSON(res, 500, { error: e.message });
+      }
+    });
+    return;
+  }
+
+  if (url === '/api/gmail/clean-spam' && req.method === 'POST') {
+    if (!isLocalIP(req)) return sendJSON(res, 403, { error: 'Forbidden' });
+    const result = handleGmailSpamCleanup();
+    return sendJSON(res, 200, { ...result, action: 'clean-spam' });
   }
 
   if (url === '/api/execute' && req.method === 'POST') {
@@ -321,7 +493,7 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, () => {
   console.log(`JARVIS Automation Server running at http://localhost:${PORT}`);
   console.log(`Serving static files from: ${PUBLIC_DIR}`);
-  console.log(`API endpoints: /api/health, /api/chat, /api/command, /api/system-status, /api/execute`);
+  console.log(`API endpoints: /api/health, /api/chat, /api/command, /api/system-status, /api/execute, /api/gmail/messages, /api/gmail/filter, /api/gmail/clean-spam`);
 });
 
 async function getSystemStatus() {

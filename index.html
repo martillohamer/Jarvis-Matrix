@@ -117,9 +117,10 @@
       const diskEl = document.getElementById('hud-disk');
       if (diskEl) diskEl.textContent = `${diskPct}%`;
       
-      if (jarvisDot && jarvisDot.className !== 'state-dot online' && jarvisDot.className !== 'state-dot online') {
-        voice.speak('Alerta: el servidor JARVIS está caído');
-      }
+      // Alerta por voz desactivada para evitar avisos continuos
+      // if (jarvisDot && jarvisDot.className !== 'state-dot online' && jarvisDot.className !== 'state-dot online') {
+      //   voice.speak('Alerta: el servidor JARVIS está caído');
+      // }
     } catch (e) {
       console.error('HUD update error:', e);
     }

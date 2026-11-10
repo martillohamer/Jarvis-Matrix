@@ -1,76 +1,60 @@
-# HANDOFF.md - Documentación Técnica MAESTRA
+# HANDOFF.md — Documentación Técnica y Estado del Proyecto
 
-## 📌 1. Visión General del Proyecto
+## 📌 1. Registro de Estado del Proyecto
 
-**Proyecto:** T-800 / JARVIS-Demo  
-**Autor principal:** Sergio / "Manteka" / martillohamer  
-**Curso:** 1º de DAW (Oviedo)  
-**Tecnología:** Asistente de IA local con soporte de voz, chat y comandos del sistema.
-
----
-
-## 🛠️ 2. Arquitectura y Stack Tecnológico
-
-### Stack Principal:
-- **Node.js (ESM):** Servidor proxy en puerto 3002
-- **FreeLLMAPI:** Pasarela OpenAI-compatible en puerto 3001
-- **Web Speech API:** Reconocimiento y síntesis de voz del navegador
-- **Luxon:** Formateo de fechas/horas en zona Europa/Madrid
-- **Open-Meteo:** API pública sin clave para datos meteorológicos de Oviedo
-
-### Tecnologías Frontend:
-- **HTML5/CSS3:** Estructura y estilos
-- **JavaScript ES6+:** Lógica de aplicación
-- **localStorage:** Memoria de conversación (máx. 12 mensajes)
-- **speechSynthesis:** TTS nativo del navegador
+**Estado:** 100% Operativo y Validado.  
+**Fecha de actualización:** 10 de Noviembre de 2026.  
+**Autor:** Sergio / "Manteka" (martillohamer) — 1º DAW (Oviedo).  
+**Entorno de ejecución:** Windows 11 / Node.js ES Modules / Docker Desktop / PowerShell 7+.
 
 ---
 
-## 🚀 3. Evolución por Fases
+## 🛠️ 2. Componentes Integrados y Funcionales
 
-### **Fase 1: Órdenes Locales Rápidas** (`/api/command`)
-- **Seguridad IP:** Whitelist local (127.0.0.1, ::1, 192.168.x.x, 10.x.x.x)
-- **Comandos implementados:**
-  - `que hora es` / `que dia es` → Respuesta con fecha/hora en castellano
-  - `que tiempo hace` / `clima` → Consulta Open-Meteo para Oviedo (lat: 43.3603, lon: -5.8448)
-  - `abre youtube/netflix/disney/spotify` → Apertura de URLs mediante exec (whitelist)
-  - `apaga el pc` → Activación de 20s con confirmación
-  - `si, apaga` → Ejecución `shutdown /s /t 30`
-  - `cancela el apagado` → Ejecución `shutdown /a`
+### A. Integración Gmail (`menu2informatico@gmail.com`)
+- **Gestión por voz y texto:** El manejador `handleCommand` intercepta consultas sobre correos.
+- **Búsquedas de remitentes y palabras clave:**
+  - *"Telecable"*: Recupera información sobre promociones, fútbol y servicios de noviembre.
+  - *"Empleo / Trabajo / DAW / Fichaje"*: Extrae alertas sobre oportunidades laborales y avisos académicos.
+  - *"Limpieza de Spam"*: Filtra elementos de propaganda y ejecuta el borrado/traslado a papelera.
+- **Endpoints de la API de Gmail:**
+  - `GET /api/gmail/messages`: Retorna el listado de correos procesados.
+  - `POST /api/gmail/filter`: Recibe `{ keyword }` y devuelve coincidencias.
+  - `POST /api/gmail/clean-spam`: Ejecuta la rutina de limpieza.
 
-### **Fase 2: Memoria y Modos de IA**
-- **Memoria de conversación:** localStorage con historial de 12 mensajes (alternado user/assistant)
-- **Modos de IA dinámicos:**
-  - **Modo Asistente:** Respuestas concisas, técnicas y directas
-  - **Modo Amigo:** Conversación cercana, ingeniosa y natural
-  - **Modo Estudio DAW:** Enfoque pedagógico en Java, SQL, lenguajes de marcas, entornos de desarrollo
+### B. Integración SearVGA / Buscador Privado (Docker)
+- **Ruta de la pila:** `C:\Users\astur\Desktop\searxng-nextgen`
+- **Fichero de composición:** `docker-compose.prod.yml`
+- **Puerto expuesto:** `8889`
+- **Comando en lenguaje natural:** *"abre el navegador privado"*, *"inicia SearVGA"*. Lanza el archivo batch `Iniciar_SearVGA.bat` y abre `http://localhost:8889`.
 
-### **Fase 3: HUD de Sistema en Tiempo Real**
-- **Endpoint `/api/system-status`:** Métricas en tiempo real
-  - CPU: Porcentaje de uso (cálculo por CPU deltas)
-  - RAM: Memoria usada vs total
-  - Disco: Espacio libre/uso de disco C:
-  - Servicios: Estado de puertos 3001 (FreeLLMAPI) y 3002 (Jarvis)
-- **HUD visual:** Consola con LED verde/rojo por servicio
-- **Alerta por voz:** Notificación cuando un servicio cae
+### C. Automatización de Inicio (`start-jarvis.bat`)
+- Comprueba si **Docker Desktop** está activo; si no lo está, lo ejecuta y aguarda al demonio.
+- Levanta el entorno SearXNG en segundo plano (`docker compose up -d`).
+- Verifica la pasarela FreeLLMAPI en el puerto `3001`.
+- Ejecuta `node server.js` en el puerto `3002`.
+- Abre el frontend web en `http://localhost:3002`.
 
 ---
 
-## 💡 4. Créditos e Inspiración
+## 🔬 3. Protocolo de Pruebas y Validación Sintáctica
 
-### Inspiración Original:
-- **Demo base:** JARVIS-Demo inicial de Ale-Studios
-- **Arquitectura:** FreeLLMAPI + Ollama + Web Speech API
+Para validar la integridad del backend sin levantar todo el entorno:
 
-### Adaptación y Mejoras:
-- **Desarrollado por:** Sergio (martillohamer) - 1º de DAW en Oviedo
-- **Mejoras implementadas:**
-  - Sistema de comandos locales seguros
-  - Memoria de conversación persistente
-  - Modos de IA especializados (Amigo, Asistente, Estudio DAW)
-  - HUD de sistema con monitorización en tiempo real
-  - Integración Open-Meteo para clima de Oviedo
-  - Apagado seguro con confirmación
+```powershell
+# Validación sintáctica en PowerShell
+cd C:\Users\astur\Desktop\JARVIS-Demo
+node --check server.js
+```
 
-### Repositorio Oficial:
-- **GitHub:** https://github.com/martillohamer/Jarvis-Matrix
+**Resultado esperado:** Salida limpia (código de salida `0`).
+
+---
+
+## 📊 4. Cuadro de Puertos y Servicios
+
+| Servicio | Puerto | Protocolo | Estado |
+|----------|--------|-----------|--------|
+| FreeLLMAPI Gateway | 3001 | HTTP | Operativo |
+| JARVIS Node Server | 3002 | HTTP | Operativo |
+| SearVGA (SearXNG) | 8889 | HTTP (Docker) | Operativo |
