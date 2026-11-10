@@ -29,6 +29,27 @@ const ALLOWED_APPS_URLS = {
 
 let pendingShutdown = false;
 
+let lastCpuUsage = 0;
+let lastMemReads = [0, 0];
+setInterval(() => {
+  try {
+    const cpus = require('os').cpus();
+    let totalIdle = 0, totalActive = 0;
+    cpus.forEach((cpu, i) => {
+      const times = cpu.times;
+      totalIdle += times.idle;
+      totalActive += times.user + times.sys + times.nice + times.irq;
+    });
+    const now = totalIdle + totalActive;
+    if (lastCpuUsage > 0) {
+      const idleDelta = now - lastMemReads[0];
+      const totalDelta = now - lastMemReads[1];
+      if (totalDelta > 0) lastCpuUsage = 100 - Math.round((idleDelta / totalDelta) * 100);
+    }
+    lastMemReads = [now, now];
+  } catch {}
+}, 5000);
+
 const MIME_TYPES = {
   '.html': 'text/html',
   '.css': 'text/css',
@@ -300,5 +321,96 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, () => {
   console.log(`JARVIS Automation Server running at http://localhost:${PORT}`);
   console.log(`Serving static files from: ${PUBLIC_DIR}`);
-  console.log(`API endpoints: /api/health, /api/chat, /api/command, /api/execute`);
+  console.log(`API endpoints: /api/health, /api/chat, /api/command, /api/system-status, /api/execute`);
+});
+
+async function getSystemStatus() {
+  const os = require('os');
+  const cpus = os.cpus();
+  
+  let idleTime = 0;
+  let totalTime = 0;
+  cpus.forEach(cpu => {
+    const times = cpu.times;
+    idleTime += times.idle;
+    totalTime += times.user + times.sys + times.nice + times.irq + times.idle;
+  });
+  const cpuUsage = totalTime > 0 ? Math.round(100 * (1 - idleTime / totalTime)) : 0;
+
+  const mem = os.freemem();
+  const totalMem = os.totalmem();
+  const memUsage = totalMem > 0 ? Math.round(100 * (1 - mem / totalMem)) : 0;
+
+  let diskFree = 0, diskTotal = 0;
+  try {
+    const { execSync } = require('child_process');
+    const output = execSync('wmic logicaldisk get FreeSpace,Size /format:csv', { encoding: 'utf8' });
+    const lines = output.trim().split('\n').slice(1);
+    let totalFree = 0, totalSize = 0;
+    lines.forEach(line => {
+      const parts = line.split(',');
+      const free = parseInt(parts[2] || 0, 10);
+      const size = parseInt(parts[3] || 0, 10);
+      totalFree += free;
+      totalSize += size;
+    });
+    diskFree = totalFree;
+    diskTotal = totalSize;
+  } catch (e) {}
+
+  let fllmmApi = { up: false, port: 3001 };
+  let jarvisServer = { up: false, port: 3002 };
+  
+  try {
+    const res3001 = await fetch('http://localhost:3001/v1/models', { 
+      method: 'GET', 
+      signal: AbortSignal.timeout(1000) 
+    });
+    fllmmApi.up = res3001.ok;
+  } catch {}
+  
+  try {
+    const res3002 = await fetch('http://localhost:3002/api/health', { 
+      method: 'GET', 
+      signal: AbortSignal.timeout(1000) 
+    });
+    jarvisServer.up = res3002.ok;
+  } catch {}
+
+  return {
+    cpu: cpuUsage,
+    ramUsed: memUsage,
+    diskFree: diskFree,
+    diskTotal: diskTotal,
+    services: [
+      { name: 'FreeLLMAPI', port: 3001, up: fllmmApi.up },
+      { name: 'JARVIS', port: 3002, up: jarvisServer.up }
+    ]
+  };
+}
+
+http.createServer((req, res) => {
+  if (req.url.startsWith('/api/')) {
+    const url = req.url.split('?')[0];
+    if (req.method === 'OPTIONS') {
+      sendCORS(res);
+      res.writeHead(204);
+      return res.end();
+    }
+    if (url === '/api/system-status' && req.method === 'GET') {
+      if (!isLocalIP(req)) {
+        sendJSON(res, 403, { error: 'Forbidden' });
+        return;
+      }
+      getSystemStatus().then(status => {
+        sendJSON(res, 200, status);
+      }).catch(e => {
+        sendJSON(res, 500, { error: e.message });
+      });
+      return;
+    }
+    handleAPI(req, res).catch(e => sendJSON(res, 500, { error: e.message }));
+  } else {
+    serveStatic(req, res);
+  }
 });
