@@ -1,611 +1,572 @@
-import http from 'http';
-import { fileURLToPath } from 'url';
-import { dirname, join, normalize } from 'path';
-import { readFileSync, existsSync, statSync, readdirSync, unlinkSync } from 'fs';
-import { exec, execSync } from 'child_process';
-import si from 'systeminformation';
+// =============================================================================
+// JARVIS-Matrix — servidor local (Node 20+, ESM, SIN dependencias externas)
+//
+//   Arranque normal : node --env-file=.env server.js
+//   Modo pruebas    : $env:JARVIS_DRY_RUN='1'; node --env-file=.env server.js
+//                     (registra lo que haría, pero NO abre, apaga ni borra nada)
+//
+// Variables (.env):
+//   OPENAI_API_KEY   clave de FreeLLMAPI (obligatoria)
+//   JARVIS_TOKEN     token para acceso fuera de tu red (túnel / móvil fuera de casa)
+//   FREELLM_URL      por defecto http://127.0.0.1:3001
+//   JARVIS_ALLOWED_HOSTS  dominios extra permitidos (p. ej. el del túnel), separados por comas
+// =============================================================================
+import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  existsSync, statSync, readdirSync, unlinkSync, appendFileSync, statfsSync, createReadStream,
+} from 'node:fs';
+import { spawn, execFile } from 'node:child_process';
+import { timingSafeEqual } from 'node:crypto';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const PORT = 3002;
-const PUBLIC_DIR = join(__dirname, '.');
+// ----------------------------- Configuración ---------------------------------
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PORT = Number(process.env.JARVIS_PORT) || 3002;
+const HOST = process.env.JARVIS_HOST || '0.0.0.0';
+const PUBLIC_DIR = path.join(__dirname, 'public');
+const FREELLM_URL = (process.env.FREELLM_URL || 'http://127.0.0.1:3001').replace(/\/$/, '');
+const API_KEY = process.env.OPENAI_API_KEY || process.env.FREELLMAPI_API_KEY || '';
+const JARVIS_TOKEN = process.env.JARVIS_TOKEN || '';
+const DRY_RUN = process.env.JARVIS_DRY_RUN === '1';
+const EXTRA_HOSTS = (process.env.JARVIS_ALLOWED_HOSTS || '')
+  .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
 
-const API_KEY = process.env.OPENAI_API_KEY || process.env.FREELLMAPI_API_KEY || 'freellmapi-2bb21a605b140ac5adcc209d0cebbf51994b799a432edea5';
-const FREELLM_URL = 'http://localhost:3001';
-const GMAIL_USER = 'menu2informatico@gmail.com';
+const TZ = 'Europe/Madrid';
+const CITY = process.env.WEATHER_CITY || 'Oviedo';
+const LAT = process.env.WEATHER_LAT || '43.36';
+const LON = process.env.WEATHER_LON || '-5.85';
 
-const ALLOWED_APPS = {
-  youtube: 'start "" https://www.youtube.com',
-  netflix: 'start "" https://www.netflix.com/browse',
-  disney: 'start "" https://www.disneyplus.com',
-  spotify: 'start "" spotify:',
+const HOME = process.env.USERPROFILE || os.homedir();
+const DESKTOP = path.join(HOME, 'Desktop');
+const SEARVGA_DIR = process.env.SEARVGA_DIR || path.join(DESKTOP, 'searxng-nextgen');
+const OPENMONTAGE_DIR = process.env.OPENMONTAGE_DIR || path.join(DESKTOP, 'OpenMontage');
+const MAINT_SCRIPT = process.env.MAINT_SCRIPT || path.join(DESKTOP, 'Dev-Maintenance-Windows.ps1');
+const FOLDERS = {
+  descargas: path.join(HOME, 'Downloads'),
+  documentos: path.join(HOME, 'Documents'),
+  proyectos: process.env.PROJECTS_DIR || 'D:\\mis proyecto & repos',
+  repositorios: process.env.PROJECTS_DIR || 'D:\\mis proyecto & repos',
 };
+const LOG_FILE = path.join(__dirname, 'commands.log'); // ignorado por git
 
-let pendingShutdown = false;
+// ----------------------------- Registro --------------------------------------
+const ts = () => new Date().toLocaleString('sv-SE', { timeZone: TZ });
+const log = (tag, msg) => console.log(`[${ts()}] [JARVIS-${tag}] ${msg}`);
+const audit = (msg) => { try { appendFileSync(LOG_FILE, `[${ts()}] ${msg}\n`); } catch { /* sin log */ } };
 
-const MIME_TYPES = {
-  '.html': 'text/html',
-  '.css': 'text/css',
-  '.js': 'application/javascript',
-  '.json': 'application/json',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.mp4': 'video/mp4',
-  '.svg': 'image/svg+xml',
-  '.ico': 'image/x-icon'
-};
-
-function isLocalIP(req) {
-  const clientIP = req.socket.remoteAddress || '';
-  const cleanIP = clientIP.replace(/:$/, '');
-  if (cleanIP === '127.0.0.1' || cleanIP === '::1') return true;
-  if (cleanIP.startsWith('192.168.')) return true;
-  if (cleanIP.startsWith('10.')) return true;
-  return false;
+if (!API_KEY) {
+  console.error('[JARVIS-CRITICAL] Falta OPENAI_API_KEY (la clave de FreeLLMAPI).');
+  console.error('  1) Ponla en el archivo .env  (OPENAI_API_KEY=...)');
+  console.error('  2) Arranca con:  node --env-file=.env server.js');
+  process.exit(1);
+}
+if (!existsSync(PUBLIC_DIR)) {
+  console.error(`[JARVIS-CRITICAL] No existe la carpeta del frontend: ${PUBLIC_DIR}`);
+  console.error('  Mueve index.html y assets/ dentro de public/.');
+  process.exit(1);
 }
 
-function sendCORS(res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+// ----------------------------- Seguridad -------------------------------------
+// ¿Viene la petición de mi propio PC o de mi red local (y NO de un túnel/proxy)?
+function clientIsLocal(req) {
+  const h = req.headers;
+  // Cloudflare Tunnel y otros proxies conectan desde 127.0.0.1: estas cabeceras los delatan.
+  if (h['cf-connecting-ip'] || h['cf-ray'] || h['x-forwarded-for'] || h['x-real-ip']) return false;
+  const ip = (req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+  return (
+    ip === '127.0.0.1' || ip === '::1' ||
+    /^192\.168\.\d{1,3}\.\d{1,3}$/.test(ip) ||
+    /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip) ||
+    /^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(ip)
+  );
 }
 
+function tokenOk(req) {
+  const t = req.headers['x-jarvis-token'];
+  if (!JARVIS_TOKEN || typeof t !== 'string') return false;
+  const a = Buffer.from(t);
+  const b = Buffer.from(JARVIS_TOKEN);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+const authorized = (req) => clientIsLocal(req) || tokenOk(req);
+
+// Anti "DNS rebinding": solo respondemos a nombres de host conocidos.
+function hostAllowed(hostHeader) {
+  if (!hostHeader) return false;
+  const h = hostHeader.toLowerCase().replace(/:\d+$/, '');
+  if (h === 'localhost' || h === '127.0.0.1' || h === '[::1]') return true;
+  if (/^[a-z0-9-]+\.local$/.test(h)) return true;
+  if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  return EXTRA_HOSTS.includes(h);
+}
+
+// Anti CSRF: si el navegador manda Origin, tiene que ser esta misma web.
+function originOk(req) {
+  const o = req.headers.origin;
+  if (!o) return true; // curl, scripts, misma-origen en GET
+  try { return new URL(o).host.toLowerCase() === (req.headers.host || '').toLowerCase(); } catch { return false; }
+}
+
+// ----------------------------- Utilidades HTTP -------------------------------
 function sendJSON(res, status, obj) {
-  sendCORS(res);
-  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+  });
   res.end(JSON.stringify(obj));
 }
 
-function serveStatic(req, res) {
-  sendCORS(res);
-
-  const urlPath = decodeURIComponent(req.url.split('?')[0]);
-
-  // Security: reject access to sensitive files and directories
-  const lowerPath = urlPath.toLowerCase();
-  if (
-    lowerPath.includes('.env') ||
-    lowerPath.endsWith('.js') ||
-    lowerPath.endsWith('.md') ||
-    lowerPath.includes('node_modules') ||
-    urlPath.startsWith('/.')
-  ) {
-    res.writeHead(403, { 'Content-Type': 'text/plain' });
-    return res.end('403 Forbidden - Sensitive File Protected');
-  }
-
-  const safePath = normalize(urlPath).replace(/^(\.\.[/\\])/, '');
-  const filePath = join(PUBLIC_DIR, safePath === '/' || safePath === '\\' ? 'index.html' : safePath);
-
-  if (!filePath.startsWith(PUBLIC_DIR) || !existsSync(filePath) || statSync(filePath).isDirectory()) {
-    res.writeHead(404, { 'Content-Type': 'text/plain' });
-    return res.end('404 Not Found');
-  }
-
-  const ext = filePath.split('.').pop();
-  const contentType = MIME_TYPES['.' + ext] || 'application/octet-stream';
-
-  try {
-    const content = readFileSync(filePath);
-    res.writeHead(200, { 'Content-Type': contentType });
-    res.end(content);
-  } catch (err) {
-    res.writeHead(500, { 'Content-Type': 'text/plain' });
-    res.end('500 Internal Server Error');
-  }
-}
-
-function normalizeText(text) {
-  return text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
-}
-
-function fetchGmailMessages(token = null) {
-  try {
-    const messages = [
-      { id: 'msg_1', from: 'Telecable <venta@telecable.es>', subject: 'Oferta LaLiga 2025-2026', snippet: 'Accede a todo el contenido de fútbol con nuestra nueva oferta especial para la temporada.', date: new Date().toISOString() },
-      { id: 'msg_2', from: 'Empleo <info@empresaempleo.com>', subject: 'Oportunidad DAW - Programador Junior', snippet: 'Buscamos programador junior para proyecto de desarrollo web. Fichaje inmediato disponible.', date: new Date().toISOString() },
-      { id: 'msg_3', from: 'Universidad <informacion@universidad.edu>', subject: 'Aviso de clases', snippet: 'Cambio de aula para el examen final del curso.', date: new Date().toISOString() },
-      { id: 'msg_4', from: 'Promociones <ofertas@tiendaonline.com>', subject: 'Urgente: Descuento exclusivo en facturas y compras', snippet: 'Aprovecha nuestra factura rebajada por tiempo limitado.', date: new Date().toISOString() }
-    ];
-    return messages;
-  } catch (e) {
-    return [];
-  }
-}
-
-async function searchGmailBySenderOrKeyword(query, token = null) {
-  const messages = fetchGmailMessages(token);
-  if (!messages || messages.length === 0) {
-    return { found: false, reply: 'No he podido acceder a tu bandeja de entrada de Gmail.' };
-  }
-  const normalizedQuery = normalizeText(query);
-  const matches = messages.filter(msg => 
-    normalizeText(msg.from).includes(normalizedQuery) ||
-    normalizeText(msg.subject).includes(normalizedQuery) ||
-    normalizeText(msg.snippet).includes(normalizedQuery)
-  );
-  if (matches.length === 0) {
-    return { found: false, reply: `No encontré correos que coincidan con "${query}".` };
-  }
-  const latest = matches[0];
-  return {
-    found: true,
-    reply: `He encontrado el correo de "${latest.from}" con asunto "${latest.subject}". ${latest.snippet}`
-  };
-}
-
-function filterGmailMessages(keyword) {
-  const messages = fetchGmailMessages();
-  const normalizedKeyword = normalizeText(keyword);
-  const filtered = messages.filter(msg => 
-    normalizeText(msg.from).includes(normalizedKeyword) ||
-    normalizeText(msg.subject).includes(normalizedKeyword) ||
-    normalizeText(msg.snippet).includes(normalizedKeyword)
-  );
-  return filtered;
-}
-
-function handleGmailSpamCleanup() {
-  const messages = fetchGmailMessages();
-  const spamKeywords = ['oferta', 'descuento', 'promociones', 'factura', 'urgente'];
-  const spamCount = messages.filter(msg => 
-    spamKeywords.some(kw => normalizeText(msg.subject).includes(kw) || normalizeText(msg.snippet).includes(kw))
-  ).length;
-  
-  return { 
-    handled: true, 
-    reply: `Limpieza de spam ejecutada. Se han procesado y limpiado ${spamCount || 2} correos de spam/basura y propaganda.` 
-  };
-}
-
-// Módulo de Mantenimiento del Sistema operativo robustecido (Temp, Prefetch, FlushDNS)
-function handleSystemMaintenance() {
-  try {
-    // Purga caché DNS de forma limpia
-    try {
-      execSync('ipconfig /flushdns', { stdio: 'ignore' });
-    } catch (e) {}
-
-    // Limpieza segura de carpetas temporales omitiendo archivos bloqueados
-    const tempDirs = [process.env.TEMP, process.env.TMP, 'C:\\Windows\\Temp'].filter(Boolean);
-    let cleanedCount = 0;
-
-    tempDirs.forEach(dir => {
-      try {
-        if (existsSync(dir)) {
-          const files = readdirSync(dir);
-          files.forEach(file => {
-            try {
-              const curPath = join(dir, file);
-              const stat = statSync(curPath);
-              if (stat.isFile()) {
-                unlinkSync(curPath);
-                cleanedCount++;
-              }
-            } catch (err) {
-              // Se omiten de forma segura los archivos en uso por procesos activos
-            }
-          });
-        }
-      } catch (e) {}
+function readBody(req, max = 1_000_000) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > max) { reject(Object.assign(new Error('Petición demasiado grande'), { status: 413 })); req.destroy(); return; }
+      chunks.push(c);
     });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
 
-    const reply = `Señor, protocolo de optimización del sistema completado con éxito:\n` +
-                  ` • Caché DNS: Purgada correctamente.\n` +
-                  ` • Archivos temporales (%TEMP% y Windows\\Temp): Limpieza ejecutada, ${cleanedCount} archivos eliminados.\n` +
-                  ` Estado operacional: Sistema optimizado.`;
-    return { handled: true, reply };
+async function readJSON(req) {
+  const raw = await readBody(req);
+  try { return raw ? JSON.parse(raw) : {}; } catch { throw Object.assign(new Error('JSON inválido'), { status: 400 }); }
+}
+
+// ----------------------------- Ejecución de acciones -------------------------
+// Nunca se pasa texto del usuario a un shell: se usa spawn con lista de argumentos.
+function runDetached(cmd, args, opts = {}) {
+  if (DRY_RUN) { log('DRY', `${cmd} ${args.join(' ')}`); audit(`DRY ${cmd} ${args.join(' ')}`); return; }
+  try {
+    const child = spawn(cmd, args, { detached: true, stdio: 'ignore', ...opts });
+    child.on('error', (e) => log('ERROR', `${cmd}: ${e.message}`));
+    child.unref();
+  } catch (e) { log('ERROR', `${cmd}: ${e.message}`); }
+}
+const openTarget = (t) => runDetached('rundll32', ['url.dll,FileProtocolHandler', t]);
+const openFolder = (p) => runDetached('explorer.exe', [p]);
+const startSearvga = () => {
+  runDetached('cmd.exe', ['/c', 'start', '', 'Iniciar_SearVGA.bat'], { cwd: SEARVGA_DIR, windowsHide: true });
+  setTimeout(() => openTarget('http://localhost:8889'), 4000);
+};
+
+// ----------------------------- Información real ------------------------------
+function dateTime() {
+  const now = new Date();
+  const f = (o) => new Intl.DateTimeFormat('es-ES', { timeZone: TZ, ...o }).format(now);
+  const hora = f({ hour: '2-digit', minute: '2-digit', hour12: false });
+  return { hora, fecha: f({ weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) };
+}
+
+const WMO = {
+  0: 'cielo despejado', 1: 'mayormente despejado', 2: 'parcialmente nublado', 3: 'cielo cubierto',
+  45: 'niebla', 48: 'niebla con escarcha', 51: 'llovizna ligera', 53: 'llovizna', 55: 'llovizna intensa',
+  61: 'lluvia ligera', 63: 'lluvia', 65: 'lluvia fuerte', 71: 'nieve ligera', 73: 'nieve', 75: 'nieve fuerte',
+  80: 'chubascos ligeros', 81: 'chubascos', 82: 'chubascos fuertes', 95: 'tormenta',
+  96: 'tormenta con granizo', 99: 'tormenta fuerte con granizo',
+};
+
+async function weatherReply() {
+  const url = 'https://api.open-meteo.com/v1/forecast'
+    + `?latitude=${LAT}&longitude=${LON}&current=temperature_2m,weather_code`
+    + '&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max'
+    + `&timezone=${encodeURIComponent(TZ)}&forecast_days=1`;
+  const r = await fetch(url, { signal: AbortSignal.timeout(6000) });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const d = await r.json();
+  const t = d?.current?.temperature_2m;
+  if (typeof t !== 'number') throw new Error('Respuesta sin datos');
+  const desc = WMO[d.current.weather_code] ?? 'tiempo variable';
+  const max = d?.daily?.temperature_2m_max?.[0];
+  const min = d?.daily?.temperature_2m_min?.[0];
+  const rain = d?.daily?.precipitation_probability_max?.[0];
+  let reply = `En ${CITY} hay ${Math.round(t)} grados, con ${desc}.`;
+  if (typeof max === 'number' && typeof min === 'number') reply += ` Hoy la mínima es de ${Math.round(min)} y la máxima de ${Math.round(max)}.`;
+  if (typeof rain === 'number') reply += ` Probabilidad de lluvia: ${rain} por ciento.`;
+  return reply;
+}
+
+function cpuSnapshot() {
+  let idle = 0; let total = 0;
+  for (const c of os.cpus()) {
+    const t = c.times;
+    idle += t.idle;
+    total += t.user + t.nice + t.sys + t.idle + t.irq;
+  }
+  return { idle, total };
+}
+async function cpuPercent() {
+  const a = cpuSnapshot();
+  await new Promise((r) => setTimeout(r, 300));
+  const b = cpuSnapshot();
+  const dt = b.total - a.total;
+  return dt > 0 ? Math.round(100 * (1 - (b.idle - a.idle) / dt)) : 0;
+}
+function diskInfo() {
+  try {
+    const root = process.platform === 'win32' ? `${process.env.SystemDrive || 'C:'}\\` : '/';
+    const s = statfsSync(root);
+    return { diskFree: s.bavail * s.bsize, diskTotal: s.blocks * s.bsize };
+  } catch { return { diskFree: 0, diskTotal: 0 }; }
+}
+async function probeUrl(url, ms = 800) {
+  try { await fetch(url, { signal: AbortSignal.timeout(ms) }); return true; } catch { return false; }
+}
+
+// Diagnóstico de FreeLLMAPI: distingue "apagado" de "clave rechazada".
+async function probeFreeLLM(ms = 3000) {
+  try {
+    const r = await fetch(`${FREELLM_URL}/v1/models`, {
+      headers: { Authorization: `Bearer ${API_KEY}` },
+      signal: AbortSignal.timeout(ms),
+    });
+    const out = { online: r.ok, reachable: true, status: r.status };
+    if (r.status === 401 || r.status === 403) out.hint = 'La pasarela responde pero rechaza la clave: revisa OPENAI_API_KEY en .env';
+    return out;
   } catch (e) {
-    return { handled: true, reply: 'Protocolo de mantenimiento finalizado con advertencias de archivos bloqueados.' };
+    return { online: false, reachable: false, code: e.cause?.code || e.name, error: `No se puede conectar con FreeLLMAPI en ${FREELLM_URL}` };
   }
 }
 
 async function getSystemStatus() {
-  try {
-    const [cpuLoad, mem, disk] = await Promise.all([
-      si.currentLoad(),
-      si.mem(),
-      si.fsSize()
-    ]);
-
-    const mainDisk = disk[0] || { use: 0, size: 0, available: 0 };
-    const cpuUsage = Math.round(cpuLoad.currentLoad);
-    const memUsage = Math.round((mem.used / mem.total) * 100);
-
-    let fllmmApi = { up: false, port: 3001 };
-    let jarvisServer = { up: true, port: 3002 };
-    
-    try {
-      const res3001 = await fetch(`${FREELLM_URL}/v1/models`, { 
-        method: 'GET', 
-        headers: { 'Authorization': `Bearer ${API_KEY}` },
-        signal: AbortSignal.timeout(1000) 
-      });
-      fllmmApi.up = res3001.ok;
-    } catch {}
-
-    return {
-      cpu: cpuUsage,
-      ramUsed: memUsage,
-      diskFree: mainDisk.available || 0,
-      diskTotal: mainDisk.size || 0,
-      services: [
-        { name: 'FreeLLMAPI', port: 3001, up: fllmmApi.up },
-        { name: 'JARVIS', port: 3002, up: jarvisServer.up }
-      ]
-    };
-  } catch (e) {
-    return { cpu: 0, ramUsed: 0, diskFree: 0, diskTotal: 0, services: [] };
-  }
+  const [cpu, llm, searvga] = await Promise.all([cpuPercent(), probeFreeLLM(1000), probeUrl('http://127.0.0.1:8889/')]);
+  const mem = os.totalmem();
+  return {
+    cpu,
+    ramUsed: Math.round(100 * (1 - os.freemem() / mem)),
+    ...diskInfo(),
+    services: [
+      { name: 'FreeLLMAPI', port: 3001, up: llm.online },
+      { name: 'JARVIS', port: PORT, up: true },
+      { name: 'SearVGA', port: 8889, up: searvga },
+    ],
+  };
 }
 
-async function handleCommand(text) {
-  const normalized = normalizeText(text);
-
-  if (normalized.includes('que hora es') || normalized.includes('hora') || normalized.includes('time')) {
-    const now = new Date();
-    const days = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
-    const months = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
-    const dayName = days[now.getDay()];
-    const monthName = months[now.getMonth()];
-    const hours = now.getHours().toString().padStart(2, '0');
-    const minutes = now.getMinutes().toString().padStart(2, '0');
-    const seconds = now.getSeconds().toString().padStart(2, '0');
-    const reply = `Señor, son las ${hours}:${minutes}:${seconds} del ${dayName} ${now.getDate()} de ${monthName} de ${now.getFullYear()}. Sistemas temporales sincronizados.`;
-    return { handled: true, reply };
-  }
-
-  if (normalized.includes('que dia es') || normalized.includes('día es') || normalized.includes('día')) {
-    const now = new Date();
-    const days = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
-    const dayName = days[now.getDay()];
-    const months = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
-    const reply = `Hoy es ${dayName}, ${now.getDate()} de ${months[now.getMonth()]} de ${now.getFullYear()}.`;
-    return { handled: true, reply };
-  }
-
-  if (normalized.includes('que tiempo hace') || normalized.includes('clima') || normalized.includes('tiempo') || normalized.includes('temperatura') || normalized.includes('tiempo en oviedo')) {
+// ----------------------------- Mantenimiento (solo con confirmación) ---------
+function runMaintenance() {
+  if (DRY_RUN) { log('DRY', 'mantenimiento: flushdns + borrar temporales >24 h'); return 'Modo de pruebas: no he borrado nada.'; }
+  execFile('ipconfig', ['/flushdns'], { windowsHide: true }, () => {});
+  const dir = process.env.TEMP || os.tmpdir();
+  const limit = Date.now() - 24 * 3600 * 1000;
+  let n = 0; let bytes = 0;
+  for (const f of readdirSync(dir)) {
     try {
-      const response = await fetch('https://api.open-meteo.com/v1/forecast?latitude=43.36&longitude=-5.85&current_weather=true');
-      const data = await response.json();
-      if (data && data.current_weather) {
-        const temp = data.current_weather.temperature;
-        const windspeed = data.current_weather.windspeed;
-        const reply = `En Oviedo, la temperatura actual es de ${temp}°C con una velocidad de viento de ${windspeed} km/h según los sensores meteorológicos en tiempo real.`;
-        return { handled: true, reply };
+      const p = path.join(dir, f);
+      const s = statSync(p);
+      if (s.isFile() && s.mtimeMs < limit) { unlinkSync(p); n += 1; bytes += s.size; }
+    } catch { /* en uso o sin permiso: se omite */ }
+  }
+  return `Hecho. He vaciado la caché DNS y borrado ${n} archivos temporales antiguos, unos ${Math.round(bytes / 1048576)} megas.`;
+}
+
+// ----------------------------- Motor de órdenes ------------------------------
+// Solo frases claras y completas (anclas ^ $): "ahora", "trabajo" o "daw" sueltos NO activan nada.
+function normalize(text) {
+  return String(text).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim()
+    .replace(/^(?:oye |hey |ok )?(?:jarvis|yarbis|yervis|jervis|llarvis) /, '')
+    .replace(/ (?:por favor|gracias)$/, '').trim();
+}
+
+const SITE_HOME = {
+  youtube: 'https://www.youtube.com', netflix: 'https://www.netflix.com/browse',
+  disney: 'https://www.disneyplus.com', spotify: 'spotify:',
+};
+const SITE_SEARCH = {
+  spotify: (q) => `https://open.spotify.com/search/${encodeURIComponent(q)}`,
+  youtube: (q) => `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`,
+  disney: (q) => `https://www.disneyplus.com/search/${encodeURIComponent(q)}`,
+};
+const site = (s) => (s.startsWith('disney') ? 'disney' : s);
+const SITE_NAME = { spotify: 'Spotify', youtube: 'YouTube', disney: 'Disney Plus', netflix: 'Netflix' };
+
+let pending = null; // { type: 'shutdown' | 'maintenance', expires }
+const askConfirm = (type) => { pending = { type, expires: Date.now() + 20000 }; };
+
+async function handleCommand(raw) {
+  const n = normalize(raw);
+  if (!n) return { handled: false };
+  if (pending && Date.now() >= pending.expires) pending = null;
+  let m;
+
+  // 1) Confirmaciones de acciones delicadas
+  if (pending) {
+    const typed = n.match(/^(?:si|confirmo) (apaga|apagalo|limpia)$/);
+    const typedType = typed ? (typed[1] === 'limpia' ? 'maintenance' : 'shutdown') : null;
+    const yes = /^(?:si|vale|confirmo|confirmado|adelante|hazlo|dale)$/.test(n) || typedType === pending.type;
+    const no = /^(?:no|cancela|cancelar|olvidalo|mejor no|para)$/.test(n);
+    if (yes) {
+      const { type } = pending; pending = null;
+      if (type === 'shutdown') {
+        runDetached('shutdown', ['/s', '/t', '30'], { windowsHide: true });
+        return { handled: true, risk: 'red', reply: 'Apagando el equipo en 30 segundos. Di «cancela el apagado» si quieres detenerlo.' };
       }
-      throw new Error('Datos meteorológicos no disponibles');
-    } catch (e) {
-      return { handled: true, reply: 'Los enlaces con los satélites meteorológicos sufren interferencias. Telemetría local estable: ambiente fresco en Oviedo.' };
+      return { handled: true, risk: 'red', reply: runMaintenance() };
+    }
+    if (no) { pending = null; return { handled: true, reply: 'De acuerdo, lo dejo como estaba.' }; }
+  }
+
+  // 2) Apagado
+  if (/^(?:cancela|cancelar|anula|anular|deten|detener)\b.*\bapagado\b/.test(n)) {
+    pending = null;
+    runDetached('shutdown', ['/a'], { windowsHide: true });
+    return { handled: true, risk: 'red', reply: 'Apagado cancelado.' };
+  }
+  if (/^(?:puedes |podrias )?(?:apaga|apagar|apagame)\b.*\b(?:pc|ordenador|equipo|computadora|portatil)\b/.test(n)) {
+    askConfirm('shutdown');
+    return { handled: true, risk: 'red', reply: '¿Seguro que quieres apagar el equipo? Di «sí» en los próximos 20 segundos para confirmar.' };
+  }
+
+  // 3) Mantenimiento (siempre pide confirmación)
+  if (/^(?:limpia|limpiar|optimiza|optimizar)(?: el)? (?:sistema|pc|ordenador|equipo|temporales|archivos temporales)$|^limpia la basura$|^flush ?dns$|^vacia la cache dns$/.test(n)) {
+    askConfirm('maintenance');
+    return { handled: true, risk: 'red', reply: 'Voy a vaciar la caché DNS y borrar los archivos temporales de tu usuario con más de un día. ¿Confirmas? Di «sí» en los próximos 20 segundos.' };
+  }
+
+  // 4) Hora y fecha reales
+  if (/^(?:dime )?(?:la )?hora(?: actual)?$|^que hora (?:es|son|tenemos)(?: ahora| actual)?$/.test(n)) {
+    const { hora } = dateTime();
+    return { handled: true, reply: `${Number(hora.split(':')[0]) === 1 ? 'Es la' : 'Son las'} ${hora}.` };
+  }
+  if (/^(?:que )?dia (?:es|estamos)(?: hoy)?$|^en que dia estamos$|^a que dia estamos$|^(?:que )?fecha (?:es|tenemos)(?: hoy)?$|^dime la fecha$|^fecha de hoy$/.test(n)) {
+    return { handled: true, reply: `Hoy es ${dateTime().fecha}.` };
+  }
+
+  // 5) Clima real (si falla, lo dice: no inventa)
+  if (/^(?:que )?(?:tiempo|clima) (?:hace|hay|hara)(?: hoy| ahora| en oviedo)?$|^(?:el )?clima(?: de hoy| en oviedo)?$|^va a llover(?: hoy)?$|^que temperatura (?:hay|hace)(?: hoy| ahora)?$|^como esta el tiempo$|^prevision del tiempo$/.test(n)) {
+    try { return { handled: true, reply: await weatherReply() }; } catch (e) {
+      log('ERROR', `Clima: ${e.message}`);
+      return { handled: true, reply: 'No he podido consultar el tiempo ahora mismo. Inténtalo de nuevo en unos minutos.' };
     }
   }
 
-  // Intención de Monitoreo / Telemetría Nivel DIOS
-  if (normalized.includes('estado del sistema') || normalized.includes('monitoreo') || normalized.includes('como esta el equipo') || normalized.includes('uso de ram') || normalized.includes('uso de cpu') || normalized.includes('telemetria')) {
-    try {
-      const status = await getSystemStatus();
-      const freeGB = Math.round(status.diskFree / (1024 * 1024 * 1024));
-      const totalGB = Math.round(status.diskTotal / (1024 * 1024 * 1024));
-      const reply = `Señor, telemetría del sistema T-800 actualizada:\n` +
-                    ` • CPU: ${status.cpu}% de carga\n` +
-                    ` • RAM: ${status.ramUsed}% de uso\n` +
-                    ` • Disco Principal: ${freeGB} GB libres de ${totalGB} GB\n` +
-                    ` Estado operacional: ÓPTIMO.`;
-      return { handled: true, reply };
-    } catch (e) {
-      return { handled: true, reply: 'Error al recuperar la telemetría avanzada del sistema.' };
-    }
+  // 6) Estado del sistema
+  if (/^(?:estado del (?:sistema|equipo|pc|ordenador)|como esta el (?:equipo|pc|ordenador)|telemetria|uso de (?:ram|cpu|memoria)|monitoreo(?: del sistema)?)$/.test(n)) {
+    const s = await getSystemStatus();
+    const gb = (b) => Math.round(b / 1073741824);
+    const llm = s.services.find((x) => x.name === 'FreeLLMAPI')?.up ? 'conectada' : 'desconectada';
+    return { handled: true, reply: `Procesador al ${s.cpu} por ciento, memoria al ${s.ramUsed} por ciento, disco con ${gb(s.diskFree)} gigas libres de ${gb(s.diskTotal)}. La pasarela de IA está ${llm}.` };
   }
 
-  // Intención de Mantenimiento y Optimización (ampliada con variantes)
-  if (
-    normalized.includes('limpia el sistema') || 
-    normalized.includes('optimiza el sistema') || 
-    normalized.includes('optimiza el pc') || 
-    normalized.includes('limpia temporales') || 
-    normalized.includes('flushdns') || 
-    normalized.includes('limpia la basura') || 
-    normalized.includes('mantenimiento')
-  ) {
-    return handleSystemMaintenance();
+  // 7) Gmail: aún no está conectado, así que Jarvis lo dice con claridad
+  if (/^(?:lee|leeme|leer|revisa|mira|limpia|borra|elimina|tengo|hay)\b.*\b(?:correos?|emails?|mails?|bandeja de entrada)\b|^(?:limpia|borra|elimina)\b.*\b(?:spam|propaganda)\b/.test(n)) {
+    return { handled: true, reply: 'Gmail todavía no está conectado, así que no puedo leer ni limpiar tu correo. Cuando lo conectemos con permisos de solo lectura, te aviso.' };
   }
 
-  // Gmail - búsqueda específica de remitentes o palabras clave
-  const telecableMatch = text.match(/telecable/i);
-  if (telecableMatch) {
-    const result = await searchGmailBySenderOrKeyword('Telecable');
-    return { handled: true, reply: result.reply };
+  // 8) SearVGA
+  if (/^(?:(?:abre|abrir|inicia|iniciar|arranca|lanza) (?:el )?)?(?:navegador privado|searvga|buscador privado)$/.test(n)) {
+    startSearvga();
+    return { handled: true, reply: 'Iniciando SearVGA. Abriré el buscador privado en unos segundos.' };
   }
 
-  const trabajoMatch = text.match(/(correos? de trabajo|avisos? de trabajo|trabajo)/i);
-  const dawMatch = text.match(/(avisos? de daw|fichaje|daw)/i);
-  const spamMatch = text.match(/(limpia|spam|propaganda|comerciales|borra)[^\.]*correo/i);
-  
-  if (spamMatch || normalized.includes('limpia el spam') || normalized.includes('elimina la propaganda') || normalized.includes('borra correos comerciales')) {
-    return handleGmailSpamCleanup();
+  // 9) Búsquedas en Spotify / YouTube / Disney+
+  m = n.match(/^(?:pon|ponme|busca|buscame|reproduce) (.{1,100}?) en (spotify|youtube|disney(?: plus)?)$/);
+  if (m) {
+    const s = site(m[2]);
+    openTarget(SITE_SEARCH[s](m[1]));
+    return { handled: true, reply: `Buscando ${m[1]} en ${SITE_NAME[s]}.` };
+  }
+  m = n.match(/^(?:busca|buscame) en (spotify|youtube|disney(?: plus)?) (.{1,100})$/);
+  if (m) {
+    const s = site(m[1]);
+    openTarget(SITE_SEARCH[s](m[2]));
+    return { handled: true, reply: `Buscando ${m[2]} en ${SITE_NAME[s]}.` };
   }
 
-  if (trabajoMatch || dawMatch) {
-    const result = await searchGmailBySenderOrKeyword('empleo');
-    return { handled: true, reply: result.reply };
+  // 10) Abrir apps y carpetas
+  m = n.match(/^(?:abre|abrir|abreme|ponme|pon) (?:el |la )?(youtube|netflix|disney(?: plus)?|spotify)$/);
+  if (m) {
+    const s = site(m[1]);
+    openTarget(SITE_HOME[s]);
+    return { handled: true, reply: `Abriendo ${SITE_NAME[s]}.` };
   }
-
-  if (normalized.includes('correo') || normalized.includes('correos') || normalized.includes('bandeja')) {
-    if (normalized.includes('léeme') || normalized.includes('leer')) {
-      const messages = fetchGmailMessages();
-      if (messages && messages.length > 0) {
-        const latest = messages[0];
-        return { handled: true, reply: `Te envío los correos recientes. El más reciente es de ${latest.from} con asunto ${latest.subject}. ${latest.snippet}` };
-      }
-      return { handled: true, reply: 'Bandeja de entrada vacía o sin acceso.' };
-    }
-    return { 
-      handled: true, 
-      reply: 'Bandeja de entrada sincronizada para menu2informatico@gmail.com. No se detectan correos urgentes sin leer en este momento.' 
-    };
-  }
-
-  // Navegador privado / SearVGA (Docker)
-  const privateBrowserMatch = text.match(/(abre el navegador privado|inicia SearVGA|buscador privado|searvga)/i);
-  if (privateBrowserMatch) {
-    try {
-      exec('cd /d "C:\\Users\\astur\\Desktop\\searxng-nextgen" && start "" Iniciar_SearVGA.bat', () => {});
-      setTimeout(() => {
-        exec('start "" http://localhost:8889', () => {});
-      }, 3000);
-      return { handled: true, reply: 'Iniciando SearVGA... Abriendo el buscador privado en http://localhost:8889' };
-    } catch (e) {
-      return { handled: true, reply: 'Error al iniciar SearVGA. Asegúrate de que Docker Desktop esté corriendo.' };
-    }
-  }
-
-  // Comandos Multimedia
-  const spotifySearchMatch = text.match(/(?:busca en spotify|pon\s+(.+)\s+en spotify|busca\s+(.+)\s+en spotify)/i);
-  if (spotifySearchMatch) {
-    const query = (spotifySearchMatch[1] || spotifySearchMatch[2] || text.replace(/busca en spotify/i, '')).trim();
-    if (query) {
-      const queryUrl = encodeURIComponent(query);
-      exec(`start "" "https://open.spotify.com/search/${queryUrl}"`, () => {});
-      return { handled: true, reply: `Buscando '${query}' en Spotify, señor.` };
-    }
-  }
-
-  const youtubeSearchMatch = text.match(/(?:busca en youtube|pon\s+(.+)\s+en youtube|busca\s+(.+)\s+en youtube)/i);
-  if (youtubeSearchMatch) {
-    const query = (youtubeSearchMatch[1] || youtubeSearchMatch[2] || text.replace(/busca en youtube/i, '')).trim();
-    if (query) {
-      const queryUrl = encodeURIComponent(query);
-      exec(`start "" "https://www.youtube.com/results?search_query=${queryUrl}"`, () => {});
-      return { handled: true, reply: `Abriendo la búsqueda de '${query}' en YouTube.` };
-    }
-  }
-
-  const disneySearchMatch = text.match(/(?:busca en disney plus|busca en disney)\s+(.+)|(?:busca en disney plus|busca en disney)/i);
-  if (disneySearchMatch) {
-    const query = (disneySearchMatch[1] || text.replace(/busca en disney plus|busca en disney/i, '')).trim();
-    if (query) {
-      const queryUrl = encodeURIComponent(query);
-      exec(`start "" "https://www.disneyplus.com/search/${queryUrl}"`, () => {});
-      return { handled: true, reply: `Abriendo catálogo de Disney+ para '${query}'.` };
-    }
-  }
-
-  // Comandos del Explorador del PC
-  if (normalized.includes('abre descargas')) {
-    exec('explorer.exe %USERPROFILE%\\Downloads', () => {});
-    return { handled: true, reply: 'Abriendo la carpeta de Descargas.' };
-  }
-
-  if (normalized.includes('abre mis proyectos') || normalized.includes('abre repositorios')) {
-    exec('explorer.exe "D:\\mis proyecto & repos"', () => {});
-    return { handled: true, reply: 'Abriendo la carpeta de proyectos y repositorios.' };
-  }
-
-  if (normalized.includes('abre documentos')) {
-    exec('explorer.exe %USERPROFILE%\\Documents', () => {});
-    return { handled: true, reply: 'Abriendo la carpeta de Documentos.' };
-  }
-
-  if (normalized.includes('abre youtube')) {
-    exec(ALLOWED_APPS.youtube, () => {});
-    return { handled: true, reply: 'Abriendo YouTube...' };
-  }
-
-  if (normalized.includes('abre netflix')) {
-    exec(ALLOWED_APPS.netflix, () => {});
-    return { handled: true, reply: 'Abriendo Netflix...' };
-  }
-
-  if (normalized.includes('abre disney')) {
-    exec(ALLOWED_APPS.disney, () => {});
-    return { handled: true, reply: 'Abriendo Disney+...' };
-  }
-
-  if (normalized.includes('abre spotify')) {
-    exec(ALLOWED_APPS.spotify, () => {});
-    return { handled: true, reply: 'Abriendo Spotify...' };
-  }
-
-  if (normalized.includes('apaga el pc')) {
-    pendingShutdown = true;
-    setTimeout(() => { pendingShutdown = false; }, 20000);
-    return { handled: true, reply: '¿Seguro? Di "sí, apaga" para confirmar.' };
-  }
-
-  if (normalized.includes('si apaga') || normalized.includes('sí apaga')) {
-    if (pendingShutdown) {
-      exec('shutdown /s /t 30', () => {});
-      pendingShutdown = false;
-      return { handled: true, reply: 'El PC se apagará en 30 segundos. Puedes cancelar diciendo "cancela el apagado".' };
-    }
-  }
-
-  if (normalized.includes('cancela el apagado')) {
-    pendingShutdown = false;
-    exec('shutdown /a', () => {});
-    return { handled: true, reply: 'Apagado cancelado.' };
+  m = n.match(/^(?:abre|abrir|abreme) (?:mis |mi |la carpeta de |la carpeta )?(descargas|documentos|proyectos|repositorios)$/);
+  if (m) {
+    openFolder(FOLDERS[m[1]]);
+    return { handled: true, reply: `Abriendo ${m[1]}.` };
   }
 
   return { handled: false };
 }
 
-async function handleAPI(req, res) {
-  const url = req.url.split('?')[0];
+// ----------------------------- API -------------------------------------------
+const GATEWAY_DOWN = 'Señor, la pasarela de IA no está disponible ahora mismo, pero los sistemas locales operan con normalidad.';
+const assistantMsg = (content, extra = {}) => ({ choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }], ...extra });
+const NET_CODES = new Set(['ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'TimeoutError', 'UND_ERR_CONNECT_TIMEOUT', 'EHOSTUNREACH']);
 
-  if (req.method === 'OPTIONS') {
-    sendCORS(res);
-    res.writeHead(204);
-    return res.end();
-  }
-
-  if (!isLocalIP(req)) {
-    return sendJSON(res, 403, { error: 'Forbidden' });
-  }
-
-  if (url === '/api/command' && req.method === 'POST') {
-    let body = '';
-    req.on('data', chunk => (body += chunk));
-    req.on('end', async () => {
-      try {
-        const { text } = JSON.parse(body);
-        if (!text || typeof text !== 'string') {
-          return sendJSON(res, 400, { error: 'Invalid text' });
-        }
-
-        const result = await handleCommand(text);
-        console.log('Comando procesado:', text, '-> handled:', result.handled);
-        return sendJSON(res, 200, result);
-      } catch (e) {
-        return sendJSON(res, 400, { error: e.message });
-      }
+async function handleChat(req, res) {
+  const body = await readJSON(req);
+  if (!Array.isArray(body.messages) || body.messages.length === 0) return sendJSON(res, 400, { error: 'Falta messages' });
+  const payload = { ...body, model: body.model || 'auto', stream: false };
+  const t0 = Date.now();
+  let upstream;
+  try {
+    upstream = await fetch(`${FREELLM_URL}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${API_KEY}` },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(90000),
     });
-    return;
+  } catch (e) {
+    const code = e.cause?.code || e.name;
+    log('ERROR', `FreeLLMAPI no responde (${code})`);
+    if (NET_CODES.has(code)) return sendJSON(res, 200, assistantMsg(GATEWAY_DOWN, { _degraded: true, _cause: code }));
+    return sendJSON(res, 502, { error: 'Error de proxy', details: e.message, code });
   }
-
-  if (url === '/api/chat' && req.method === 'POST') {
-    let body = '';
-    req.on('data', chunk => (body += chunk));
-    req.on('end', async () => {
-      try {
-        const parsed = JSON.parse(body);
-        const forwardBody = { ...parsed, model: parsed.model || 'auto' };
-        const upstream = await fetch(`${FREELLM_URL}/v1/chat/completions`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${API_KEY}`
-          },
-          body: JSON.stringify(forwardBody)
-        });
-        const data = await upstream.json();
-        sendJSON(res, upstream.status, data);
-      } catch (e) {
-        sendJSON(res, 502, { error: 'Proxy error', details: e.message });
-      }
-    });
-    return;
-  }
-
-  if (url === '/api/health' && req.method === 'GET') {
-    try {
-      const upstream = await fetch(`${FREELLM_URL}/v1/models`, { 
-        method: 'GET', 
-        headers: { 'Authorization': `Bearer ${API_KEY}` },
-        signal: AbortSignal.timeout(3000) 
-      });
-      return sendJSON(res, 200, { online: upstream.ok, status: upstream.status });
-    } catch (e) {
-      return sendJSON(res, 200, { online: false, error: e.message });
-    }
-  }
-
-  if (url === '/api/system-status' && req.method === 'GET') {
-    const status = await getSystemStatus();
-    return sendJSON(res, 200, status);
-  }
-
-  if (url === '/api/gmail/messages' && req.method === 'GET') {
-    try {
-      const messages = fetchGmailMessages();
-      return sendJSON(res, 200, { messages, account: GMAIL_USER });
-    } catch (e) {
-      return sendJSON(res, 500, { error: e.message });
-    }
-  }
-
-  if (url === '/api/gmail/filter' && req.method === 'POST') {
-    let body = '';
-    req.on('data', chunk => (body += chunk));
-    req.on('end', async () => {
-      try {
-        const { keyword } = JSON.parse(body);
-        if (!keyword) return sendJSON(res, 400, { error: 'Keyword required' });
-        const matches = filterGmailMessages(keyword);
-        return sendJSON(res, 200, { found: matches.length > 0, count: matches.length, messages: matches, keyword });
-      } catch (e) {
-        return sendJSON(res, 500, { error: e.message });
-      }
-    });
-    return;
-  }
-
-  if (url === '/api/gmail/clean-spam' && req.method === 'POST') {
-    const result = handleGmailSpamCleanup();
-    return sendJSON(res, 200, { ...result, action: 'clean-spam' });
-  }
-
-  if (url === '/api/execute' && req.method === 'POST') {
-    let body = '';
-    req.on('data', chunk => (body += chunk));
-    req.on('end', () => {
-      try {
-        const { command, target } = JSON.parse(body);
-        let execCommand = '';
-
-        switch (command) {
-          case 'launch-openmontage':
-            execCommand = 'cd /d "C:\\Users\\astur\\Desktop\\OpenMontage" && npm run dev';
-            break;
-          case 'launch-searxng':
-            execCommand = 'cd /d "C:\\Users\\astur\\Desktop\\searxng-nextgen" && start "" Iniciar_SearVGA.bat';
-            break;
-          case 'run-maintenance':
-            execCommand = 'powershell.exe -ExecutionPolicy Bypass -File "C:\\Users\\astur\\Desktop\\Dev-Maintenance-Windows.ps1"';
-            break;
-          case 'open-folder': {
-            const cleanTarget = target && /^[\w\-. ]+$/.test(target) ? target : 'Jarvis-Matrix';
-            execCommand = `explorer "C:\\Users\\astur\\Desktop\\${cleanTarget}"`;
-            break;
-          }
-          default:
-            return sendJSON(res, 400, { success: false, error: 'Comando no reconocido' });
-        }
-
-        exec(execCommand, (error) => {
-          if (error) console.error(`Error de ejecución: ${error.message}`);
-        });
-
-        sendJSON(res, 200, { success: true, command, message: `Ejecutado correctamente: ${command}` });
-      } catch (e) {
-        sendJSON(res, 400, { success: false, error: e.message });
-      }
-    });
-    return;
-  }
-
-  sendJSON(res, 404, { error: 'Not found' });
+  const text = await upstream.text();
+  let data;
+  try { data = JSON.parse(text); } catch { return sendJSON(res, 502, { error: 'Respuesta no válida de FreeLLMAPI', status: upstream.status }); }
+  const via = data?._routed_via;
+  log('AI', `${via?.platform || '?'} / ${via?.model || data?.model || '?'} · ${((Date.now() - t0) / 1000).toFixed(1)} s · HTTP ${upstream.status}`);
+  if (upstream.ok) return sendJSON(res, 200, data);
+  // Error de la pasarela: se lo explicamos al usuario en lugar de dejar la burbuja vacía.
+  const why = upstream.status === 401 || upstream.status === 403 ? 'rechazó la clave; revisa OPENAI_API_KEY en .env'
+    : upstream.status === 429 ? 'indica que la cuota gratuita está agotada o saturada; espera un poco'
+      : `devolvió el error ${upstream.status}`;
+  return sendJSON(res, 200, assistantMsg(`Señor, la pasarela de IA ${why}.`, { _degraded: true, _upstream_status: upstream.status }));
 }
 
-const server = http.createServer((req, res) => {
-  if (req.url.startsWith('/api/')) {
-    handleAPI(req, res).catch(e => sendJSON(res, 500, { error: e.message }));
-  } else {
-    serveStatic(req, res);
+async function handleExecute(req, res) {
+  if (!clientIsLocal(req)) return sendJSON(res, 403, { error: 'Solo desde este equipo o la red local' });
+  const { command, target } = await readJSON(req);
+  switch (command) {
+    case 'launch-openmontage':
+      runDetached('cmd.exe', ['/c', 'npm', 'run', 'dev'], { cwd: OPENMONTAGE_DIR, windowsHide: true });
+      break;
+    case 'launch-searxng':
+      startSearvga();
+      break;
+    case 'run-maintenance':
+      runDetached('powershell.exe', ['-ExecutionPolicy', 'Bypass', '-File', MAINT_SCRIPT], { windowsHide: true });
+      break;
+    case 'open-folder': {
+      const clean = typeof target === 'string' && /^[\w\-. ]+$/.test(target) && !target.includes('..') ? target : 'Jarvis-Matrix';
+      openFolder(path.join(DESKTOP, clean));
+      break;
+    }
+    default:
+      return sendJSON(res, 400, { success: false, error: 'Comando no reconocido' });
+  }
+  audit(`EXECUTE ${command}`);
+  return sendJSON(res, 200, { success: true, command, message: `Ejecutado: ${command}` });
+}
+
+async function handleAPI(req, res, pathname) {
+  if (pathname === '/api/health' && req.method === 'GET') {
+    return sendJSON(res, 200, { ...(await probeFreeLLM()), dryRun: DRY_RUN, gateway: FREELLM_URL });
+  }
+  if (pathname === '/api/system-status' && req.method === 'GET') {
+    return sendJSON(res, 200, await getSystemStatus());
+  }
+  if (pathname === '/api/command' && req.method === 'POST') {
+    const { text } = await readJSON(req);
+    if (typeof text !== 'string' || !text.trim() || text.length > 500) return sendJSON(res, 400, { error: 'Texto no válido' });
+    const result = await handleCommand(text);
+    if (result.handled) { log('CMD', `${result.risk || 'ok'} · ${text.slice(0, 80)}`); audit(`CMD [${result.risk || 'ok'}] "${text.slice(0, 120)}" -> ${result.reply.slice(0, 80)}`); }
+    return sendJSON(res, 200, { handled: result.handled, ...(result.handled ? { reply: result.reply } : {}) });
+  }
+  if (pathname === '/api/chat' && req.method === 'POST') return handleChat(req, res);
+  if (pathname === '/api/execute' && req.method === 'POST') return handleExecute(req, res);
+  if (pathname.startsWith('/api/gmail/')) {
+    return sendJSON(res, 501, { error: 'Gmail todavía no está conectado (requiere OAuth con permisos de solo lectura).' });
+  }
+  return sendJSON(res, 404, { error: 'Not found' });
+}
+
+// ----------------------------- Archivos estáticos ----------------------------
+const MIME = {
+  '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8', '.webmanifest': 'application/manifest+json',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp',
+  '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.gif': 'image/gif',
+  '.mp4': 'video/mp4', '.webm': 'video/webm', '.mp3': 'audio/mpeg', '.wav': 'audio/wav',
+  '.woff': 'font/woff', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8',
+};
+
+function serveStatic(req, res, pathname) {
+  const plain = (code, msg) => { res.writeHead(code, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end(msg); };
+  if (req.method !== 'GET' && req.method !== 'HEAD') return plain(405, 'Método no permitido');
+  let rel;
+  try { rel = decodeURIComponent(pathname); } catch { return plain(400, 'Petición incorrecta'); }
+  if (rel.includes('\0') || rel.split(/[\\/]/).some((seg) => seg.startsWith('.'))) return plain(404, '404 Not Found');
+  const filePath = path.resolve(PUBLIC_DIR, `.${rel.endsWith('/') ? `${rel}index.html` : rel}`);
+  const relPath = path.relative(PUBLIC_DIR, filePath);
+  if (relPath.startsWith('..') || path.isAbsolute(relPath)) return plain(404, '404 Not Found');
+  let st;
+  try { st = statSync(filePath); } catch { return plain(404, '404 Not Found'); }
+  if (!st.isFile()) return plain(404, '404 Not Found');
+
+  const size = st.size;
+  let start = 0; let end = size - 1; let status = 200;
+  const rg = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+  if (rg && (rg[1] || rg[2])) {
+    if (rg[1] === '') start = Math.max(0, size - Number(rg[2]));
+    else { start = Number(rg[1]); if (rg[2] !== '') end = Math.min(end, Number(rg[2])); }
+    if (start > end || start >= size) { res.writeHead(416, { 'Content-Range': `bytes */${size}` }); return res.end(); }
+    status = 206;
+  }
+  const headers = {
+    'Content-Type': MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream',
+    'Content-Length': end - start + 1,
+    'Accept-Ranges': 'bytes',
+    'Cache-Control': 'no-cache',
+    'X-Content-Type-Options': 'nosniff',
+  };
+  if (status === 206) headers['Content-Range'] = `bytes ${start}-${end}/${size}`;
+  res.writeHead(status, headers);
+  if (req.method === 'HEAD') return res.end();
+  createReadStream(filePath, { start, end }).on('error', () => res.destroy()).pipe(res);
+  return undefined;
+}
+
+// ----------------------------- Servidor --------------------------------------
+const server = http.createServer(async (req, res) => {
+  try {
+    const { pathname } = new URL(req.url, 'http://localhost');
+    if (!hostAllowed(req.headers.host)) { res.writeHead(403, { 'Content-Type': 'text/plain' }); return res.end('Host no permitido'); }
+    if (pathname.startsWith('/api/')) {
+      // Sin cabeceras CORS a propósito: la web y la API son del mismo origen.
+      if (req.method === 'OPTIONS') { res.writeHead(204, { Allow: 'GET, POST, OPTIONS' }); return res.end(); }
+      if (!originOk(req)) return sendJSON(res, 403, { error: 'Origen no permitido' });
+      if (!authorized(req)) return sendJSON(res, 403, { error: 'Forbidden' });
+      return await handleAPI(req, res, pathname);
+    }
+    if (!clientIsLocal(req)) { res.writeHead(403, { 'Content-Type': 'text/plain' }); return res.end('Forbidden'); }
+    return serveStatic(req, res, pathname);
+  } catch (e) {
+    log('ERROR', e.stack || e.message);
+    if (!res.headersSent) return sendJSON(res, e.status || 500, { error: e.message });
+    return res.end();
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`JARVIS Automation Server running at http://localhost:${PORT}`);
-  console.log(`Serving static files from: ${PUBLIC_DIR}`);
-  console.log(`API endpoints: /api/health, /api/chat, /api/command, /api/system-status, /api/execute, /api/gmail/messages, /api/gmail/filter, /api/gmail/clean-spam`);
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') console.error(`[JARVIS-CRITICAL] El puerto ${PORT} ya está en uso. Cierra el otro servidor (Get-NetTCPConnection -LocalPort ${PORT}).`);
+  else console.error('[JARVIS-CRITICAL] Error del servidor:', err);
+  process.exit(1);
 });
+
+server.listen(PORT, HOST, () => {
+  log('SUCCESS', `Servidor JARVIS-Matrix escuchando en http://localhost:${PORT}`);
+  log('INFO', `Frontend: ${PUBLIC_DIR}`);
+  if (DRY_RUN) log('INFO', 'MODO PRUEBAS (JARVIS_DRY_RUN=1): no se ejecuta ninguna acción real.');
+  if (!JARVIS_TOKEN) log('INFO', 'Sin JARVIS_TOKEN: el acceso desde fuera de tu red (túnel/móvil) queda BLOQUEADO.');
+  probeFreeLLM(1500).then((r) => {
+    if (r.online) log('SUCCESS', `FreeLLMAPI conectado en ${FREELLM_URL}`);
+    else log('ERROR', `FreeLLMAPI NO responde en ${FREELLM_URL} (${r.hint || r.error || `HTTP ${r.status}`}${r.code ? `, ${r.code}` : ''})`);
+  });
+});
+
+// Que un error inesperado no mate el servidor en silencio.
+process.on('uncaughtException', (err) => { console.error('[JARVIS-CRITICAL] Uncaught Exception:', err); audit(`UNCAUGHT ${err.message}`); });
+process.on('unhandledRejection', (reason) => { console.error('[JARVIS-CRITICAL] Unhandled Rejection:', reason); audit(`REJECTION ${reason}`); });
