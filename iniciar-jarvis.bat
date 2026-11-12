@@ -6,33 +6,18 @@ echo ==========================================
 echo    INICIANDO SISTEMA JARVIS-MATRIX
 echo ==========================================
 
-:: Verificar que existe la carpeta de JARVIS
-if not exist "C:\Users\astur\Desktop\JARVIS-Demo" (
-    echo [ERROR] No se encuentra la carpeta de JARVIS-Demo
-    pause
-    exit /b 1
-)
+:: 1. Iniciar FreeLLMAPI mediante su script oficial de PowerShell
+echo [1/2] Arrancando pasarela FreeLLMAPI (puerto 3001)...
+start "FreeLLMAPI" /d "C:\Users\astur\Desktop\freellmapi-opencode" powershell -NoExit -ExecutionPolicy Bypass -File "C:\Users\astur\Desktop\freellmapi-opencode\iniciar-freellmapi.ps1"
 
-echo [1/2] Verificando puertos...
+:: Pausa de 4 segundos para dar margen a que levante el puerto 3001
+timeout /t 4 /nobreak >nul
 
-:: Verificar FreeLLMAPI en puerto 3001
-echo Verificando FreeLLMAPI en puerto 3001...
-cd /d "C:\Users\astur\Desktop\FreeLLMAPI" 2>nul
-start "FreeLLMAPI" cmd /k "npm run dev" 2>nul
-timeout /t 20 /nobreak >nul
+:: 2. Iniciar el servidor backend de JARVIS fijando su directorio
+echo [2/2] Arrancando Servidor JARVIS-Matrix (puerto 3002)...
+start "JARVIS-Backend" /d "C:\Users\astur\Desktop\JARVIS-Demo" cmd /k "node --env-file=.env server.js"
 
-:: Verificar JARVIS server en puerto 3002
-echo Verificando JARVIS-Matrix en puerto 3002...
-cd /d "C:\Users\astur\Desktop\JARVIS-Demo"
-start "JARVIS-Matrix Backend" cmd /k "node --env-file=.env server.js"
-timeout /t 15 /nobreak >nul
-
-echo.
 echo ==========================================
-echo  SISTEMA JARVIS-MATRIX ACTIVO
+echo  ¡Sistemas desplegados con éxito, señor!
 echo ==========================================
-echo.
-echo Accede a la consola en: http://localhost:3002
-echo FreeLLMAPI endpoint: http://localhost:3001/v1/chat/completions
-echo.
 pause
