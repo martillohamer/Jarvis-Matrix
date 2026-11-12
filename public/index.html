@@ -12,6 +12,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/styles.css">
+<link rel="icon" href="data:,">
 <script type="module">
   import { JarvisAPI, setMode, getMode } from './assets/jarvis.js';
   import { VoiceManager } from './assets/voice-manager.js';
@@ -56,7 +57,7 @@
         </div>
       </div>
       <div class="console-messages" id="console-messages">
-        <div class="msg system">Sistemas inicializados. Conectando a http://localhost:3001...</div>
+        <div class="msg system">Sistemas inicializados. Conectando a http://localhost:3002...</div>
       </div>
       <div class="console-input">
         <input type="text" id="console-input" placeholder="Message JARVIS..." autocomplete="off">
@@ -89,7 +90,7 @@
       } else if (dot && !apiOnline) {
         dot.className = 'state-dot offline';
         status.querySelector('span:last-child').textContent = 'API Offline';
-        addMessage('system', '✗ FreeLLMAPI no disponible. Inicia el servidor en puerto 3001');
+        addMessage('system', '✗ FreeLLMAPI no disponible. Asegúrate de que el servidor JARVIS esté corriendo en http://localhost:3002');
       }
     } catch (e) {
       if (dot && !apiOnline) dot.className = 'state-dot offline';
@@ -324,7 +325,7 @@
 <main>
   <section class="hero">
     <div class="wrap">
-      <p class="eyebrow">Free · Unlimited · 100% local</p>
+      <p class="eyebrow">Free · Unlimited</p>
       <h1>An AI that <span class="grad">speaks your language</span>,<br>running on your machine</h1>
       <p class="lede">A free chatbot and advanced voice mode for Windows. Write or speak in your
         language — Jarvis replies in text and out loud, in that same language, with a native
@@ -333,7 +334,7 @@
         <button class="btn btn-primary">⚡ Open Console</button>
         <a class="btn btn-ghost" href="#how">How it works</a>
       </div>
-      <p class="cta-note">Windows 10 / 11 · requiere el modelo local (ya incluido en el servidor)</p>
+      <p class="cta-note">Windows 10 / 11 · arranque con FreeLLMAPI y núcleo local</p>
       <div class="langs">
         <span class="lang">🇬🇧 English</span>
         <span class="lang">🇮🇹 Italiano</span>
