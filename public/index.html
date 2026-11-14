@@ -2,7 +2,7 @@
 <html lang="es" translate="no">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="google" content="notranslate">
     <title>JARVIS SLAYERS // Consola K.I.T.T.</title>
     <link rel="stylesheet" href="/assets/styles.css">
@@ -17,7 +17,7 @@
             </div>
 
             <!-- Miniatura de Esfera 3D o Lanzador -->
-            <div class="kitt-card sphere-launch-card" id="launch-voice-sphere-btn">
+            <button class="kitt-card sphere-launch-card" id="launch-voice-sphere-btn" role="button" aria-label="Iniciar esfera de voz JARVIS" aria-controls="voice-overlay">
                 <div class="card-header-mini">
                     <span>NÚCLEO HOLOGRÁFICO</span>
                     <span class="status-badge" id="sphere-status">[EN LÍNEA]</span>
@@ -30,7 +30,7 @@
             </div>
 
             <!-- Hardware Telemetry Bars -->
-            <div class="kitt-card">
+            <div class="kitt-card" role="region" aria-label="Selección de perfil de voz JARVIS">
                 <div class="card-header-mini">
                     <span>TELEMETRÍA DE HARDWARE</span>
                     <span class="status-badge cyan" id="telemetry-status">[ESTABLE]</span>
@@ -54,7 +54,7 @@
             </div>
 
             <!-- Voice Profiles Selector -->
-            <div class="kitt-card">
+            <div class="kitt-card" role="region" aria-label="Selección de perfil de voz JARVIS">
                 <div class="card-header-mini">
                     <span>PERFIL DE SÍNTESIS VOCAL</span>
                 </div>
@@ -77,7 +77,7 @@
             </div>
 
             <!-- Operations Log -->
-            <div class="kitt-card log-card">
+            <div class="kitt-card log-card" role="region" aria-label="Registro de operaciones JARVIS">
                 <div class="card-header-mini">
                     <span>REGISTRO DE OPERACIONES</span>
                     <span class="status-badge purp" id="log-status">[EN VIVO]</span>
@@ -96,7 +96,7 @@
                     <p class="eyebrow">ENLACE NEURONAL DIRECTO CON JARVIS</p>
                 </div>
                 <div class="topbar-actions">
-                    <button class="btn btn-ghost" id="clear-chat-btn">LIMPIAR</button>
+                    <button class="btn btn-ghost" id="clear-chat-btn" aria-label="Limpiar historial de chat">LIMPIAR</button>
                     <button class="btn btn-ghost" id="export-session-btn">EXPORTAR</button>
                     <div class="mic-status-indicator" id="mic-status-indicator">MIC: EN ESPERA</div>
                 </div>
