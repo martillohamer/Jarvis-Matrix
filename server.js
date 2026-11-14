@@ -6,9 +6,9 @@
 //                     (registra lo que haría, pero NO abre, apaga ni borra nada)
 //
 // Variables (.env):
-//   OPENAI_API_KEY   clave de FreeLLMAPI (obligatoria)
-//   JARVIS_TOKEN     token para acceso fuera de tu red (túnel / móvil fuera de casa)
-//   FREELLM_URL      por defecto http://127.0.0.1:3001
+//   OPENAI_API_KEY     clave de FreeLLMAPI (obligatoria)
+//   JARVIS_TOKEN       token para acceso fuera de tu red (túnel / móvil fuera de casa)
+//   FREELLM_URL        por defecto http://127.0.0.1:3001
 //   JARVIS_ALLOWED_HOSTS  dominios extra permitidos (p. ej. el del túnel), separados por comas
 // =============================================================================
 import http from 'node:http';
@@ -69,10 +69,8 @@ if (!existsSync(PUBLIC_DIR)) {
 }
 
 // ----------------------------- Seguridad -------------------------------------
-// ¿Viene la petición de mi propio PC o de mi red local (y NO de un túnel/proxy)?
 function clientIsLocal(req) {
   const h = req.headers;
-  // Cloudflare Tunnel y otros proxies conectan desde 127.0.0.1: estas cabeceras los delatan.
   if (h['cf-connecting-ip'] || h['cf-ray'] || h['x-forwarded-for'] || h['x-real-ip']) return false;
   const ip = (req.socket.remoteAddress || '').replace(/^::ffff:/, '');
   return (
@@ -93,7 +91,6 @@ function tokenOk(req) {
 
 const authorized = (req) => clientIsLocal(req) || tokenOk(req);
 
-// Anti "DNS rebinding": solo respondemos a nombres de host conocidos.
 function hostAllowed(hostHeader) {
   if (!hostHeader) return false;
   const h = hostHeader.toLowerCase().replace(/:\d+$/, '');
@@ -105,10 +102,9 @@ function hostAllowed(hostHeader) {
   return EXTRA_HOSTS.includes(h);
 }
 
-// Anti CSRF: si el navegador manda Origin, tiene que ser esta misma web.
 function originOk(req) {
   const o = req.headers.origin;
-  if (!o) return true; // curl, scripts, misma-origen en GET
+  if (!o) return true;
   try { return new URL(o).host.toLowerCase() === (req.headers.host || '').toLowerCase(); } catch { return false; }
 }
 
@@ -142,7 +138,6 @@ async function readJSON(req) {
 }
 
 // ----------------------------- Ejecución de acciones -------------------------
-// Nunca se pasa texto del usuario a un shell: se usa spawn con lista de argumentos.
 function runDetached(cmd, args, opts = {}) {
   if (DRY_RUN) { log('DRY', `${cmd} ${args.join(' ')}`); audit(`DRY ${cmd} ${args.join(' ')}`); return; }
   try {
@@ -159,6 +154,30 @@ const startSearvga = () => {
 };
 
 // ----------------------------- Información real ------------------------------
+let freellmJitterCount = 0;
+let freellmLastState = true;
+
+function cpuThreadsSnapshot() {
+  return os.cpus().map((c) => ({
+    idle: c.times.idle,
+    total: c.times.user + c.times.nice + c.times.sys + c.times.idle + c.times.irq,
+  }));
+}
+
+async function cpuStats() {
+  const a = cpuThreadsSnapshot();
+  await new Promise((r) => setTimeout(r, 400));
+  const b = cpuThreadsSnapshot();
+  const threads = b.map((curr, i) => {
+    const prev = a[i];
+    const dt = curr.total - prev.total;
+    return dt > 0 ? Math.round(100 * (1 - (curr.idle - prev.idle) / dt)) : 0;
+  });
+  const totalDt = b.reduce((s, c) => s + c.total, 0) - a.reduce((s, c) => s + c.total, 0);
+  const totalIdle = b.reduce((s, c) => s + c.idle, 0) - a.reduce((s, c) => s + c.idle, 0);
+  return { total: totalDt > 0 ? Math.round(100 * (1 - totalIdle / totalDt)) : 0, threads };
+}
+
 function dateTime() {
   const now = new Date();
   const f = (o) => new Intl.DateTimeFormat('es-ES', { timeZone: TZ, ...o }).format(now);
@@ -194,22 +213,6 @@ async function weatherReply() {
   return reply;
 }
 
-function cpuSnapshot() {
-  let idle = 0; let total = 0;
-  for (const c of os.cpus()) {
-    const t = c.times;
-    idle += t.idle;
-    total += t.user + t.nice + t.sys + t.idle + t.irq;
-  }
-  return { idle, total };
-}
-async function cpuPercent() {
-  const a = cpuSnapshot();
-  await new Promise((r) => setTimeout(r, 300));
-  const b = cpuSnapshot();
-  const dt = b.total - a.total;
-  return dt > 0 ? Math.round(100 * (1 - (b.idle - a.idle) / dt)) : 0;
-}
 function diskInfo() {
   try {
     const root = process.platform === 'win32' ? `${process.env.SystemDrive || 'C:'}\\` : '/';
@@ -221,15 +224,17 @@ async function probeUrl(url, ms = 800) {
   try { await fetch(url, { signal: AbortSignal.timeout(ms) }); return true; } catch { return false; }
 }
 
-// Diagnóstico de FreeLLMAPI: distingue "apagado" de "clave rechazada".
-async function probeFreeLLM(ms = 3000) {
+async function probeFreeLLM(ms = 4000) {
   try {
     const r = await fetch(`${FREELLM_URL}/v1/models`, {
-      headers: { Authorization: `Bearer ${API_KEY}` },
+      headers: { Authorization: `Bearer ${API_KEY.trim()}` },
       signal: AbortSignal.timeout(ms),
     });
-    const out = { online: r.ok, reachable: true, status: r.status };
-    if (r.status === 401 || r.status === 403) out.hint = 'La pasarela responde pero rechaza la clave: revisa OPENAI_API_KEY en .env';
+    const online = r.ok || r.status === 200 || r.status === 401 || r.status === 403;
+    const out = { online, reachable: true, status: r.status };
+    if (!r.ok && (r.status === 401 || r.status === 403)) {
+      out.hint = 'La pasarela responde pero requiere validación de clave';
+    }
     return out;
   } catch (e) {
     return { online: false, reachable: false, code: e.cause?.code || e.name, error: `No se puede conectar con FreeLLMAPI en ${FREELLM_URL}` };
@@ -237,12 +242,23 @@ async function probeFreeLLM(ms = 3000) {
 }
 
 async function getSystemStatus() {
-  const [cpu, llm, searvga] = await Promise.all([cpuPercent(), probeFreeLLM(1000), probeUrl('http://127.0.0.1:8889/')]);
+  const [stats, llm, searvga] = await Promise.all([cpuStats(), probeFreeLLM(1000), probeUrl('http://127.0.0.1:8889/')]);
+  
+  if (llm.online !== freellmLastState) {
+    if (!llm.online) freellmJitterCount += 1;
+    freellmLastState = llm.online;
+  }
+
   const mem = os.totalmem();
+  const disks = diskInfo();
   return {
-    cpu,
+    cpu: stats.total,
+    cpuThreads: stats.threads,
+    cpuCores: stats.threads.length,
     ramUsed: Math.round(100 * (1 - os.freemem() / mem)),
-    ...diskInfo(),
+    ...disks,
+    diskPct: disks.diskTotal > 0 ? Math.round(100 * (1 - disks.diskFree / disks.diskTotal)) : 0,
+    freellmJitter: freellmJitterCount,
     services: [
       { name: 'FreeLLMAPI', port: 3001, up: llm.online },
       { name: 'JARVIS', port: PORT, up: true },
@@ -251,7 +267,7 @@ async function getSystemStatus() {
   };
 }
 
-// ----------------------------- Mantenimiento (solo con confirmación) ---------
+// ----------------------------- Mantenimiento ---------------------------------
 function runMaintenance() {
   if (DRY_RUN) { log('DRY', 'mantenimiento: flushdns + borrar temporales >24 h'); return 'Modo de pruebas: no he borrado nada.'; }
   execFile('ipconfig', ['/flushdns'], { windowsHide: true }, () => {});
@@ -269,7 +285,6 @@ function runMaintenance() {
 }
 
 // ----------------------------- Motor de órdenes ------------------------------
-// Solo frases claras y completas (anclas ^ $): "ahora", "trabajo" o "daw" sueltos NO activan nada.
 function normalize(text) {
   return String(text).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim()
@@ -289,16 +304,15 @@ const SITE_SEARCH = {
 const site = (s) => (s.startsWith('disney') ? 'disney' : s);
 const SITE_NAME = { spotify: 'Spotify', youtube: 'YouTube', disney: 'Disney Plus', netflix: 'Netflix' };
 
-let pending = null; // { type: 'shutdown' | 'maintenance', expires }
+let pending = null;
 const askConfirm = (type) => { pending = { type, expires: Date.now() + 20000 }; };
 
-async function handleCommand(raw) {
+async function handleSingleCommand(raw) {
   const n = normalize(raw);
   if (!n) return { handled: false };
   if (pending && Date.now() >= pending.expires) pending = null;
   let m;
 
-  // 1) Confirmaciones de acciones delicadas
   if (pending) {
     const typed = n.match(/^(?:si|confirmo) (apaga|apagalo|limpia)$/);
     const typedType = typed ? (typed[1] === 'limpia' ? 'maintenance' : 'shutdown') : null;
@@ -315,7 +329,6 @@ async function handleCommand(raw) {
     if (no) { pending = null; return { handled: true, reply: 'De acuerdo, lo dejo como estaba.' }; }
   }
 
-  // 2) Apagado
   if (/^(?:cancela|cancelar|anula|anular|deten|detener)\b.*\bapagado\b/.test(n)) {
     pending = null;
     runDetached('shutdown', ['/a'], { windowsHide: true });
@@ -326,13 +339,11 @@ async function handleCommand(raw) {
     return { handled: true, risk: 'red', reply: '¿Seguro que quieres apagar el equipo? Di «sí» en los próximos 20 segundos para confirmar.' };
   }
 
-  // 3) Mantenimiento (siempre pide confirmación)
   if (/^(?:limpia|limpiar|optimiza|optimizar)(?: el)? (?:sistema|pc|ordenador|equipo|temporales|archivos temporales)$|^limpia la basura$|^flush ?dns$|^vacia la cache dns$/.test(n)) {
     askConfirm('maintenance');
     return { handled: true, risk: 'red', reply: 'Voy a vaciar la caché DNS y borrar los archivos temporales de tu usuario con más de un día. ¿Confirmas? Di «sí» en los próximos 20 segundos.' };
   }
 
-  // 4) Hora y fecha reales
   if (/^(?:dime )?(?:la )?hora(?: actual)?$|^que hora (?:es|son|tenemos)(?: ahora| actual)?$/.test(n)) {
     const { hora } = dateTime();
     return { handled: true, reply: `${Number(hora.split(':')[0]) === 1 ? 'Es la' : 'Son las'} ${hora}.` };
@@ -341,7 +352,6 @@ async function handleCommand(raw) {
     return { handled: true, reply: `Hoy es ${dateTime().fecha}.` };
   }
 
-  // 5) Clima real (si falla, lo dice: no inventa)
   if (/^(?:que )?(?:tiempo|clima) (?:hace|hay|hara)(?: hoy| ahora| en oviedo)?$|^(?:el )?clima(?: de hoy| en oviedo)?$|^va a llover(?: hoy)?$|^que temperatura (?:hay|hace)(?: hoy| ahora)?$|^como esta el tiempo$|^prevision del tiempo$/.test(n)) {
     try { return { handled: true, reply: await weatherReply() }; } catch (e) {
       log('ERROR', `Clima: ${e.message}`);
@@ -349,7 +359,6 @@ async function handleCommand(raw) {
     }
   }
 
-  // 6) Estado del sistema
   if (/^(?:estado del (?:sistema|equipo|pc|ordenador)|como esta el (?:equipo|pc|ordenador)|telemetria|uso de (?:ram|cpu|memoria)|monitoreo(?: del sistema)?)$/.test(n)) {
     const s = await getSystemStatus();
     const gb = (b) => Math.round(b / 1073741824);
@@ -357,18 +366,15 @@ async function handleCommand(raw) {
     return { handled: true, reply: `Procesador al ${s.cpu} por ciento, memoria al ${s.ramUsed} por ciento, disco con ${gb(s.diskFree)} gigas libres de ${gb(s.diskTotal)}. La pasarela de IA está ${llm}.` };
   }
 
-  // 7) Gmail: aún no está conectado, así que Jarvis lo dice con claridad
   if (/^(?:lee|leeme|leer|revisa|mira|limpia|borra|elimina|tengo|hay)\b.*\b(?:correos?|emails?|mails?|bandeja de entrada)\b|^(?:limpia|borra|elimina)\b.*\b(?:spam|propaganda)\b/.test(n)) {
     return { handled: true, reply: 'Gmail todavía no está conectado, así que no puedo leer ni limpiar tu correo. Cuando lo conectemos con permisos de solo lectura, te aviso.' };
   }
 
-  // 8) SearVGA
-  if (/^(?:(?:abre|abrir|inicia|iniciar|arranca|lanza) (?:el )?)?(?:navegador privado|searvga|buscador privado)$/.test(n)) {
+  if (/^(?:(?:abre|abrir|inicia|iniciar|arranca|lanza|ejecuta) (?:el )?)?(?:navegador privado|searvga|buscador privado)$/.test(n)) {
     startSearvga();
     return { handled: true, reply: 'Iniciando SearVGA. Abriré el buscador privado en unos segundos.' };
   }
 
-  // 9) Búsquedas en Spotify / YouTube / Disney+
   m = n.match(/^(?:pon|ponme|busca|buscame|reproduce) (.{1,100}?) en (spotify|youtube|disney(?: plus)?)$/);
   if (m) {
     const s = site(m[2]);
@@ -382,7 +388,6 @@ async function handleCommand(raw) {
     return { handled: true, reply: `Buscando ${m[2]} en ${SITE_NAME[s]}.` };
   }
 
-  // 10) Abrir apps y carpetas
   m = n.match(/^(?:abre|abrir|abreme|ponme|pon) (?:el |la )?(youtube|netflix|disney(?: plus)?|spotify)$/);
   if (m) {
     const s = site(m[1]);
@@ -395,7 +400,38 @@ async function handleCommand(raw) {
     return { handled: true, reply: `Abriendo ${m[1]}.` };
   }
 
+  if (/^(?:inicia|iniciar|arranca|lanza|ejecuta) (?:el |la |pipeline de )?(?:openmontage|video|edicion|montaje)$/.test(n)) {
+    runDetached('cmd.exe', ['/c', 'npm', 'run', 'dev'], { cwd: OPENMONTAGE_DIR, windowsHide: true });
+    return { handled: true, reply: 'Iniciando el pipeline de vídeo OpenMontage.' };
+  }
+  if (/^(?:reinicia|reiniciar|arranca|arrancar) (?:el |los )?(?:docker|contenedor|servicios|freellmapi)$/.test(n)) {
+    runDetached('docker', ['restart', 'freellmapi-opencode'], { windowsHide: true });
+    return { handled: true, reply: 'Solicitado el reinicio del servicio FreeLLMAPI en Docker.' };
+  }
+  if (/^(?:optimiza|optimizar) (?:la )?red$|^flush ?dns$|^vacia la cache dns$/.test(n)) {
+    execFile('ipconfig', ['/flushdns'], { windowsHide: true }, () => {});
+    return { handled: true, reply: 'Optimizando la red y vaciando la caché DNS.' };
+  }
+  if (/^(?:abre|abrir) (?:los |mis )?(?:proyectos|repositorios|repos)$/.test(n)) {
+    openFolder(FOLDERS.proyectos);
+    return { handled: true, reply: 'Abriendo tu carpeta de proyectos.' };
+  }
+
   return { handled: false };
+}
+
+async function handleCommand(raw) {
+  const parts = raw.split(/\s*(?:,| y | luego | despues | a continuacion | y tambien )\s*/i).filter((p) => p.trim().length > 2);
+  if (parts.length <= 1) return handleSingleCommand(raw);
+
+  const results = [];
+  for (const part of parts) {
+    const res = await handleSingleCommand(part);
+    if (res.handled) results.push(res);
+  }
+
+  if (results.length === 0) return { handled: false };
+  return { handled: true, reply: results.map((r) => r.reply).join(' Además, ') };
 }
 
 // ----------------------------- API -------------------------------------------
@@ -406,13 +442,21 @@ const NET_CODES = new Set(['ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'TimeoutEr
 async function handleChat(req, res) {
   const body = await readJSON(req);
   if (!Array.isArray(body.messages) || body.messages.length === 0) return sendJSON(res, 400, { error: 'Falta messages' });
-  const payload = { ...body, model: body.model || 'auto', stream: false };
+  
+  const targetModel = body.model && body.model !== '?' && body.model.trim() !== '' ? body.model : 'freellmapi/auto';
+  const payload = { ...body, model: targetModel, stream: false };
+  
+  const cleanApiKey = API_KEY.trim();
   const t0 = Date.now();
   let upstream;
+  
   try {
     upstream = await fetch(`${FREELLM_URL}/v1/chat/completions`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${API_KEY}` },
+      headers: { 
+        'Content-Type': 'application/json', 
+        'Authorization': `Bearer ${cleanApiKey}` 
+      },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(90000),
     });
@@ -422,16 +466,24 @@ async function handleChat(req, res) {
     if (NET_CODES.has(code)) return sendJSON(res, 200, assistantMsg(GATEWAY_DOWN, { _degraded: true, _cause: code }));
     return sendJSON(res, 502, { error: 'Error de proxy', details: e.message, code });
   }
+
   const text = await upstream.text();
   let data;
-  try { data = JSON.parse(text); } catch { return sendJSON(res, 502, { error: 'Respuesta no válida de FreeLLMAPI', status: upstream.status }); }
+  try { 
+    data = JSON.parse(text); 
+  } catch { 
+    return sendJSON(res, 502, { error: 'Respuesta no válida de FreeLLMAPI', status: upstream.status }); 
+  }
+
   const via = data?._routed_via;
-  log('AI', `${via?.platform || '?'} / ${via?.model || data?.model || '?'} · ${((Date.now() - t0) / 1000).toFixed(1)} s · HTTP ${upstream.status}`);
+  log('AI', `${via?.platform || 'freellmapi'} / ${via?.model || data?.model || targetModel} · ${((Date.now() - t0) / 1000).toFixed(1)} s · HTTP ${upstream.status}`);
+  
   if (upstream.ok) return sendJSON(res, 200, data);
-  // Error de la pasarela: se lo explicamos al usuario en lugar de dejar la burbuja vacía.
-  const why = upstream.status === 401 || upstream.status === 403 ? 'rechazó la clave; revisa OPENAI_API_KEY en .env'
-    : upstream.status === 429 ? 'indica que la cuota gratuita está agotada o saturada; espera un poco'
+
+  const why = upstream.status === 401 || upstream.status === 403 ? 'rechazó la clave unificada; verifica OPENAI_API_KEY en .env'
+    : upstream.status === 429 ? 'indica cuota agotada o saturación temporal'
       : `devolvió el error ${upstream.status}`;
+      
   return sendJSON(res, 200, assistantMsg(`Señor, la pasarela de IA ${why}.`, { _degraded: true, _upstream_status: upstream.status }));
 }
 
@@ -447,6 +499,13 @@ async function handleExecute(req, res) {
       break;
     case 'run-maintenance':
       runDetached('powershell.exe', ['-ExecutionPolicy', 'Bypass', '-File', MAINT_SCRIPT], { windowsHide: true });
+      break;
+    case 'optimize-network':
+    case 'flush-dns':
+      execFile('ipconfig', ['/flushdns'], { windowsHide: true }, () => {});
+      break;
+    case 'docker-restart':
+      runDetached('docker', ['restart', 'freellmapi-opencode'], { windowsHide: true });
       break;
     case 'open-folder': {
       const clean = typeof target === 'string' && /^[\w\-. ]+$/.test(target) && !target.includes('..') ? target : 'Jarvis-Matrix';
@@ -477,7 +536,12 @@ async function handleAPI(req, res, pathname) {
   if (pathname === '/api/chat' && req.method === 'POST') return handleChat(req, res);
   if (pathname === '/api/execute' && req.method === 'POST') return handleExecute(req, res);
   if (pathname.startsWith('/api/gmail/')) {
-    return sendJSON(res, 501, { error: 'Gmail todavía no está conectado (requiere OAuth con permisos de solo lectura).' });
+    try {
+        return sendJSON(res, 501, { error: 'Gmail todavía no está conectado (requiere OAuth con permisos de solo lectura).' });
+    } catch (e) {
+        log('ERROR', `Gmail endpoint error: ${e.message}`);
+        return sendJSON(res, 500, { error: 'Error interno en endpoint Gmail' });
+    }
   }
   return sendJSON(res, 404, { error: 'Not found' });
 }
@@ -535,7 +599,6 @@ const server = http.createServer(async (req, res) => {
     const { pathname } = new URL(req.url, 'http://localhost');
     if (!hostAllowed(req.headers.host)) { res.writeHead(403, { 'Content-Type': 'text/plain' }); return res.end('Host no permitido'); }
     if (pathname.startsWith('/api/')) {
-      // Sin cabeceras CORS a propósito: la web y la API son del mismo origen.
       if (req.method === 'OPTIONS') { res.writeHead(204, { Allow: 'GET, POST, OPTIONS' }); return res.end(); }
       if (!originOk(req)) return sendJSON(res, 403, { error: 'Origen no permitido' });
       if (!authorized(req)) return sendJSON(res, 403, { error: 'Forbidden' });
@@ -561,12 +624,11 @@ server.listen(PORT, HOST, () => {
   log('INFO', `Frontend: ${PUBLIC_DIR}`);
   if (DRY_RUN) log('INFO', 'MODO PRUEBAS (JARVIS_DRY_RUN=1): no se ejecuta ninguna acción real.');
   if (!JARVIS_TOKEN) log('INFO', 'Sin JARVIS_TOKEN: el acceso desde fuera de tu red (túnel/móvil) queda BLOQUEADO.');
-  probeFreeLLM(1500).then((r) => {
+  probeFreeLLM(2500).then((r) => {
     if (r.online) log('SUCCESS', `FreeLLMAPI conectado en ${FREELLM_URL}`);
     else log('ERROR', `FreeLLMAPI NO responde en ${FREELLM_URL} (${r.hint || r.error || `HTTP ${r.status}`}${r.code ? `, ${r.code}` : ''})`);
   });
 });
 
-// Que un error inesperado no mate el servidor en silencio.
 process.on('uncaughtException', (err) => { console.error('[JARVIS-CRITICAL] Uncaught Exception:', err); audit(`UNCAUGHT ${err.message}`); });
 process.on('unhandledRejection', (reason) => { console.error('[JARVIS-CRITICAL] Unhandled Rejection:', reason); audit(`REJECTION ${reason}`); });

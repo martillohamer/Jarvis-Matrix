@@ -3,3 +3,8 @@
 *.bak
 *.mjs
 node_modules/
+
+opencode.json
+backup-freellmapi/
+freellmapi-keys.json
+.env

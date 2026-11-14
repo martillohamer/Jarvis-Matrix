@@ -1,26 +1,23 @@
 {
   "name": "jarvis-demo",
   "version": "1.0.0",
-  "description": "[![Platform](https://img.shields.io/badge/Windows-10%20%2F%2011-0078D6?logo=windows)](https://github.com/martillohamer/Jarvis-Matrix) [![License](https://img.shields.io/badge/License-MIT-2ea44f)](LICENSE) [![Repository](https://img.shields.io/badge/Repository-martillohamer%2FJarvis-Matrix-black?logo=github)](https://github.com/martillohamer/Jarvis-Matrix)",
+  "description": "JARVIS-Matrix: centro de control local conectado a FreeLLMAPI (puerto 3001).",
   "main": "server.js",
-  "directories": {
-    "doc": "docs"
+  "type": "module",
+  "engines": {
+    "node": ">=20.6"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node --env-file=.env server.js",
+    "check": "node --check server.js"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/martillohamer/Jarvis-Matrix.git"
   },
-  "keywords": [],
-  "type": "module",
   "bugs": {
     "url": "https://github.com/martillohamer/Jarvis-Matrix/issues"
   },
   "homepage": "https://github.com/martillohamer/Jarvis-Matrix#readme",
-  "dependencies": {
-    "express": "^5.3.0",
-    "systeminformation": "^5.33.19"
-  }
+  "license": "MIT"
 }

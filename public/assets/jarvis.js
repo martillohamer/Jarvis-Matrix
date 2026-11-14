@@ -1,5 +1,5 @@
 const CHAT_HISTORY_KEY = 'jarvis_chat_history';
-const MAX_HISTORY = 12;
+const MAX_HISTORY = 16;
 
 function loadHistory() {
   try {
@@ -50,6 +50,14 @@ Responde siempre en el idioma del usuario. No inventes acceso a sistemas, monito
 
   getMode() {
     return this.mode;
+  }
+
+  getHistory() {
+    return loadHistory();
+  }
+
+  clearHistory() {
+    saveHistory([]);
   }
 
   async checkAvailability() {
