@@ -1,196 +1,215 @@
-const CHAT_HISTORY_KEY = 'jarvis_chat_history';
-const MAX_HISTORY = 16;
+import { extractReply, trimHistory } from './lib.js';
 
-function loadHistory() {
-  try {
-    const stored = localStorage.getItem(CHAT_HISTORY_KEY);
-    return stored ? JSON.parse(stored) : [];
-  } catch {
-    return [];
-  }
+const chatHistory = document.getElementById('chat-history');
+const chatInput = document.getElementById('chat-input');
+const chatSendBtn = document.getElementById('chat-send-btn');
+const terminalLog = document.getElementById('terminal-log');
+const clearChatBtn = document.getElementById('clear-chat-btn');
+const exportSessionBtn = document.getElementById('export-session-btn');
+const micStatusIndicator = document.getElementById('mic-status-indicator');
+const modulator = document.getElementById('kitt-modulator');
+
+const SYSTEM_PROMPT = { 
+    role: 'system', 
+    content: 'Eres JARVIS, una inteligencia artificial avanzada y servicial, integrada en la consola K.I.T.T. Tu tono es profesional, técnico y cortés. Respondes siempre en castellano.' 
+};
+
+let messages = [];
+
+// Cargar de sessionStorage
+try {
+    const saved = sessionStorage.getItem('jarvis_messages');
+    if (saved) {
+        messages = JSON.parse(saved).slice(-50);
+    } else {
+        messages = [SYSTEM_PROMPT];
+    }
+} catch (e) {
+    messages = [SYSTEM_PROMPT];
 }
 
-function saveHistory(history) {
-  try {
-    localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(history));
-  } catch {}
+function logTerminal(msg) {
+    const timeStr = new Date().toTimeString().split(' ')[0];
+    const entry = document.createElement('div');
+    entry.textContent = `[${timeStr}] ${msg}`;
+    terminalLog.appendChild(entry);
+    if (terminalLog.childNodes.length > 200) terminalLog.removeChild(terminalLog.firstChild);
+    terminalLog.scrollTop = terminalLog.scrollHeight;
 }
 
-export class JarvisAPI {
-  constructor(endpoint = 'http://localhost:3002') {
-    this.endpoint = endpoint;
-    this.mode = 'assistant';
-    this.systemPrompt = this._buildSystemPrompt();
-  }
-
-  _buildSystemPrompt() {
-    const now = new Date();
-    const date = now.toLocaleDateString('es-ES');
-    const time = now.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
-    
-    const modes = {
-      friend: `Eres JARVIS, tu amigo cercano con un toque ingenioso. Conversa de forma natural, directa y amistosa.`,
-      study: `Eres JARVIS, un experto senior. Explica Java, bases de datos (SQL), lenguajes de marcas (HTML/CSS) y entornos de desarrollo. Usa un lenguaje técnico preciso, haz preguntas de comprobación pedagógicas y explica paso a paso.`,
-      assistant: `Eres JARVIS, un asistente técnico conciso y directo. Responde con el máximo detalle técnico necesario y código funcional.`
-    };
-
-    return `Eres JARVIS, un asistente de voz y chat. Hoy es ${date}, son las ${time}.
-    
-${modes[this.mode]}
-
-Responde siempre en el idioma del usuario. No inventes acceso a sistemas, monitoreo ni datos que no tengas.`;
-  }
-
-  setMode(mode) {
-    if (['friend', 'study', 'assistant'].includes(mode)) {
-      this.mode = mode;
-      this.systemPrompt = this._buildSystemPrompt();
-    }
-  }
-
-  getMode() {
-    return this.mode;
-  }
-
-  getHistory() {
-    return loadHistory();
-  }
-
-  clearHistory() {
-    saveHistory([]);
-  }
-
-  async checkAvailability() {
-    try {
-      const response = await fetch(`${this.endpoint}/api/health`, {
-        method: 'GET',
-        signal: AbortSignal.timeout(3000)
-      });
-      const data = await response.json();
-      return data.online === true;
-    } catch (error) {
-      return false;
-    }
-  }
-
-  async checkCommand(text) {
-    try {
-      const response = await fetch(`${this.endpoint}/api/command`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text })
-      });
-      return await response.json();
-    } catch (error) {
-      return { handled: false };
-    }
-  }
-
-  async chat(message, options = {}) {
-    if (!await this.checkAvailability()) {
-      throw new Error('FreeLLMAPI no disponible en ' + this.endpoint);
-    }
-
-    const history = loadHistory();
-    const messages = [
-      { role: 'system', content: this.systemPrompt },
-      ...history,
-      { role: 'user', content: message }
-    ];
-
-    const body = {
-      model: 'auto',
-      messages: messages,
-      stream: options.stream || false,
-      max_tokens: options.maxTokens || 1024,
-      temperature: options.temperature || 0.7
-    };
-
-    if (options.stream) {
-      return this._streamChat(body, options.onChunk, message);
-    }
-
-    const response = await fetch(`${this.endpoint}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
+function renderMessages() {
+    chatHistory.innerHTML = '';
+    messages.forEach(msg => {
+        if (msg.role === 'system') return;
+        const bubble = document.createElement('div');
+        bubble.className = `chat-bubble ${msg.role === 'user' ? 'user' : 'jarvis'}`;
+        
+        const sender = document.createElement('div');
+        sender.className = 'bubble-sender';
+        sender.textContent = msg.role === 'user' ? 'Comandante' : 'JARVIS // K.I.T.T. Core';
+        
+        const text = document.createElement('div');
+        text.className = 'bubble-text';
+        text.textContent = msg.content;
+        
+        bubble.appendChild(sender);
+        bubble.appendChild(text);
+        chatHistory.appendChild(bubble);
     });
-
-    const data = await response.json();
-    
-    if (data.error) {
-      throw new Error(data.error);
-    }
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    
-    const content = this._extractContent(data);
-    
-    const newHist = [...history, { role: 'user', content: message }, { role: 'assistant', content: content }];
-    saveHistory(newHist.slice(-MAX_HISTORY * 2));
-    
-    return content || '';
-  }
-
-  _extractContent(data) {
-    if (!data) return '';
-    if (typeof data === 'string') return data;
-    if (data.choices && Array.isArray(data.choices) && data.choices[0]) {
-      const msg = data.choices[0].message;
-      if (msg && msg.content) return msg.content;
-    }
-    if (data.response) return data.response;
-    if (data.text) return data.text;
-    return '';
-  }
-
-  async ask(message, language = 'en') {
-    return await this.chat(message, { language });
-  }
-
-  async _streamChat(body, onChunk, lastUserMessage) {
-    const response = await fetch(`${this.endpoint}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-
-    if (!response.ok || !response.body) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || 'Streaming failed');
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let fullText = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      const chunk = decoder.decode(value, { stream: true });
-      fullText += chunk;
-      if (onChunk) onChunk(chunk);
-    }
-
-    const history = loadHistory();
-    const newHist = [...history, { role: 'user', content: lastUserMessage }, { role: 'assistant', content: fullText }];
-    saveHistory(newHist.slice(-MAX_HISTORY * 2));
-
-    return fullText;
-  }
+    chatHistory.scrollTop = chatHistory.scrollHeight;
 }
 
-export function clearHistory() {
-  localStorage.removeItem(CHAT_HISTORY_KEY);
+async function handleUserSubmit() {
+    const text = chatInput.value.trim();
+    if (!text || chatInput.disabled) return;
+
+    chatInput.value = '';
+    chatInput.disabled = true;
+    chatSendBtn.disabled = true;
+    modulator.className = 'kitt-modulator-container modo-pensando';
+
+    messages.push({ role: 'user', content: text });
+    renderMessages();
+    logTerminal(`Comando: "${text}"`);
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 100000);
+
+    try {
+        // 1. Intentar /api/command
+        let reply;
+        const cmdRes = await fetch('/api/command', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text }),
+            signal: controller.signal
+        });
+        
+        const cmdData = await cmdRes.json();
+        if (cmdData.handled) {
+            reply = cmdData.reply;
+        } else {
+            // 2. Si no es comando, ir a /api/chat
+            const chatRes = await fetch('/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ messages: trimHistory(messages) }),
+                signal: controller.signal
+            });
+            
+            if (!chatRes.ok) throw new Error(`Servidor: ${chatRes.status}`);
+            const chatData = await chatRes.json();
+            reply = extractReply(chatData);
+            if (chatData._degraded) {
+                logTerminal('Aviso: Respuesta en modo degradado.');
+            }
+        }
+        
+        messages.push({ role: 'assistant', content: reply });
+        renderMessages();
+        sessionStorage.setItem('jarvis_messages', JSON.stringify(messages));
+        
+        modulator.className = 'kitt-modulator-container modo-hablando';
+        if (window.speakResponse) window.speakResponse(reply);
+        
+        // El modo hablar se quita cuando termina la síntesis (ver voice-manager)
+        // Por ahora simulamos fin tras 2s si no hay voz real
+        if (!window.speechSynthesis || !window.speechSynthesis.speaking) {
+             setTimeout(() => modulator.className = 'kitt-modulator-container modo-espera', 2000);
+        }
+
+    } catch (e) {
+        const errorMsg = e.name === 'AbortError' ? 'Tiempo de espera agotado (100s).' : `Error: ${e.message}`;
+        logTerminal(errorMsg);
+        messages.push({ role: 'assistant', content: errorMsg });
+        renderMessages();
+        modulator.className = 'kitt-modulator-container modo-espera';
+    } finally {
+        clearTimeout(timeout);
+        chatInput.disabled = false;
+        chatSendBtn.disabled = false;
+        chatInput.focus();
+    }
 }
 
-export function getMode() {
-  const mode = localStorage.getItem('jarvis_mode') || 'assistant';
-  return mode;
+chatSendBtn.addEventListener('click', handleUserSubmit);
+chatInput.addEventListener('keydown', (e) => { 
+    if (e.key === 'Enter' && !e.isComposing) handleUserSubmit(); 
+});
+
+clearChatBtn.addEventListener('click', () => {
+    messages = [SYSTEM_PROMPT];
+    sessionStorage.removeItem('jarvis_messages');
+    renderMessages();
+    logTerminal("Memoria purgada.");
+});
+
+exportSessionBtn.addEventListener('click', () => {
+    const text = messages.filter(m => m.role !== 'system').map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `jarvis-sesion-${Date.now()}.txt`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 100);
+    logTerminal("Sesión exportada.");
+});
+
+// Telemetría Real
+let telemetryTimeout;
+async function updateTelemetry() {
+    if (document.hidden) {
+        telemetryTimeout = setTimeout(updateTelemetry, 10000);
+        return;
+    }
+    
+    try {
+        const res = await fetch('/api/system-status');
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        
+        document.getElementById('cpu-val').textContent = `${data.cpu.toFixed(1)}%`;
+        document.getElementById('cpu-fill').style.width = `${data.cpu}%`;
+        
+        const ramPct = (data.ramUsed / data.ramTotal) * 100;
+        document.getElementById('ram-val').textContent = `${(data.ramUsed/1024/1024/1024).toFixed(1)} GB`;
+        document.getElementById('ram-fill').style.width = `${ramPct}%`;
+        
+        // Badges
+        const updateBadge = (id, up) => {
+            const el = document.getElementById(id);
+            el.style.background = up ? 'rgba(0,255,100,0.2)' : 'rgba(255,50,50,0.2)';
+            el.style.borderColor = up ? '#00ff64' : '#ff3232';
+            el.style.color = up ? '#00ff64' : '#ff3232';
+        };
+        
+        if (data.services) {
+            data.services.forEach(s => {
+                if (s.name === 'FreeLLMAPI') updateBadge('badge-freellmapi', s.up);
+                if (s.name === 'JARVIS') updateBadge('badge-jarvis', s.up);
+                if (s.name === 'SearVGA') updateBadge('badge-searvga', s.up);
+            });
+        }
+        
+        document.getElementById('telemetry-status').textContent = '[ESTABLE]';
+        telemetryTimeout = setTimeout(updateTelemetry, 3000);
+    } catch (e) {
+        document.getElementById('telemetry-status').textContent = '[SIN CONEXIÓN]';
+        telemetryTimeout = setTimeout(updateTelemetry, 10000);
+    }
 }
 
-export function setMode(mode) {
-  localStorage.setItem('jarvis_mode', mode);
-}
+// Health Check al cargar
+fetch('/api/health').then(r => r.json()).then(data => {
+    if (data.online) logTerminal("Conexión neuronal establecida.");
+    updateTelemetry();
+}).catch(() => {
+    logTerminal("ERROR: Nodo central fuera de línea.");
+    document.getElementById('telemetry-status').textContent = '[SIN CONEXIÓN]';
+});
+
+// Listener para el Modulador (cambio de modo externo)
+window.setKittMode = (mode) => {
+    modulator.className = `kitt-modulator-container modo-${mode}`;
+};
