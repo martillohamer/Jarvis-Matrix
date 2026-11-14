@@ -3,36 +3,31 @@
  */
 
 export function extractReply(data) {
-  if (!data) throw new Error('No hay datos');
-  
-  // Soporte para formato OpenAI
-  if (data.choices && data.choices[0] && data.choices[0].message) {
-    const content = data.choices[0].message.content;
-    if (data._degraded) {
-      console.warn('Respuesta degradada detectada');
-    }
-    return content;
+  if (!data || !data.choices || !data.choices[0] || !data.choices[0].message) {
+    throw new Error('Formato de respuesta inválido');
   }
-  
-  // Soporte para formato directo { reply } o { response }
-  if (data.reply) return data.reply;
-  if (data.response) return data.response;
-  
-  throw new Error('Formato de respuesta inválido');
+  const content = data.choices[0].message.content;
+  if (data._degraded) console.warn('Respuesta degradada');
+  return content;
 }
 
-export function trimHistory(messages, limit = 12) {
+export function getDiskPct(free, total) {
+    if (total === 0) return 0;
+    return 100 * (1 - (free / total));
+}
+
+export function percentil10(arr) {
+    if (arr.length === 0) return -Infinity;
+    const sorted = [...arr].sort((a, b) => a - b);
+    return sorted[Math.floor(sorted.length * 0.1)];
+}
+
+export function trimHistory(messages, limit = 50) {
   if (!Array.isArray(messages)) return [];
-  if (messages.length <= limit) return messages;
-  
   const systemMessage = messages.find(m => m.role === 'system');
-  const recentMessages = messages.slice(-limit);
-  
-  if (systemMessage && !recentMessages.includes(systemMessage)) {
-    return [systemMessage, ...recentMessages];
-  }
-  
-  return recentMessages;
+  const userMessages = messages.filter(m => m.role !== 'system');
+  const recentMessages = userMessages.slice(-limit);
+  return systemMessage ? [systemMessage, ...recentMessages] : recentMessages;
 }
 
 export function rmsToDbfs(float32Array) {
