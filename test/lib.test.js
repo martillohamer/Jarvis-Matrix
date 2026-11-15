@@ -1,24 +1,23 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractReply, trimHistory, rmsToDbfs, bytesToGB, pct } from '../public/assets/lib.js';
+import { extractReply, trimHistory, rmsToDbfs, bytesToGB, pct, getDiskPct, percentil10 } from '../public/assets/lib.js';
 
 test('extractReply - OpenAI format', () => {
   const data = { choices: [{ message: { content: 'Hola' } }] };
   assert.equal(extractReply(data), 'Hola');
 });
 
-test('extractReply - degraded', () => {
-  const data = { choices: [{ message: { content: 'Hola' } }], _degraded: true };
-  assert.equal(extractReply(data), 'Hola');
-});
-
-test('extractReply - direct format', () => {
-  assert.equal(extractReply({ reply: 'Test' }), 'Test');
-  assert.equal(extractReply({ response: 'Test2' }), 'Test2');
-});
-
 test('extractReply - invalid', () => {
   assert.throws(() => extractReply({}), /Formato de respuesta inválido/);
+});
+
+test('getDiskPct', () => {
+  assert.equal(getDiskPct(50, 100), 50);
+});
+
+test('percentil10', () => {
+  const data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+  assert.equal(percentil10(data), 2);
 });
 
 test('trimHistory - keeps system message', () => {

@@ -22,12 +22,18 @@ export function percentil10(arr) {
     return sorted[Math.floor(sorted.length * 0.1)];
 }
 
-export function trimHistory(messages, limit = 50) {
+export function trimHistory(messages, limit = 12) {
   if (!Array.isArray(messages)) return [];
+  if (messages.length <= limit) return messages;
+  
   const systemMessage = messages.find(m => m.role === 'system');
-  const userMessages = messages.filter(m => m.role !== 'system');
-  const recentMessages = userMessages.slice(-limit);
-  return systemMessage ? [systemMessage, ...recentMessages] : recentMessages;
+  const recentMessages = messages.slice(-limit);
+  
+  if (systemMessage && !recentMessages.includes(systemMessage)) {
+    return [systemMessage, ...recentMessages];
+  }
+  
+  return recentMessages;
 }
 
 export function rmsToDbfs(float32Array) {

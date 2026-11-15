@@ -4,158 +4,264 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="google" content="notranslate">
-    <title>JARVIS SLAYERS // Consola K.I.T.T.</title>
+    <title>JARVIS SLAYERS // Consola K.I.T.T. Nivel DIOS</title>
     <link rel="stylesheet" href="/assets/styles.css">
 </head>
 <body>
+
     <div class="kitt-app-container">
-        <!-- COLUMNA IZQUIERDA: Telemetría, Diagnóstico y Perfiles -->
+        <!-- SIDEBAR IZQUIERDO: Telemetría, Discos, Calibración de Voz y Perfiles -->
         <aside class="kitt-sidebar">
             <div class="kitt-brand">
                 <span class="pulse-dot"></span>
                 JARVIS <b>SLAYERS</b> <span class="version-tag">v3.5 K.I.T.T.</span>
             </div>
 
-            <!-- Miniatura de Esfera 3D o Lanzador -->
-            <button class="kitt-card sphere-launch-card" id="launch-voice-sphere-btn" role="button" aria-label="Iniciar esfera de voz JARVIS" aria-controls="voice-overlay">
+            <!-- Lanzador de Esfera 3D -->
+            <button class="kitt-card sphere-launch-card" id="launch-voice-sphere-btn">
                 <div class="card-header-mini">
                     <span>NÚCLEO HOLOGRÁFICO</span>
                     <span class="status-badge" id="sphere-status">[EN LÍNEA]</span>
                 </div>
-                <div class="sphere-preview-container" title="Activar Esfera 3D Interactiva">
+                <div class="sphere-preview-container">
                     <div class="holo-ring"></div>
                     <div class="holo-core"></div>
                     <div class="sphere-label">ACTIVAR ESFERA 3D</div>
                 </div>
+            </button>
+
+            <!-- Telemetría de Hardware & Discos Duros -->
+            <div class="kitt-card">
+                <div class="card-header-mini">
+                    <span>ESTADO & DISCOS DUROS</span>
+                    <span class="status-badge cyan">[ESTABLE]</span>
+                </div>
+                <div style="font-family: var(--font-mono); font-size: 0.78rem; display: flex; flex-direction: column; gap: 6px;">
+                    <div>CPU (12 Hilos): <span id="tele-cpu" style="color: var(--accent-cyan);">14.2%</span></div>
+                    <div>MEMORIA RAM: <span id="tele-ram" style="color: var(--accent-cyan);">8.4 / 16.0 GB (52%)</span></div>
+                    <div>DISCO PRINCIPAL: <span id="tele-disk" style="color: var(--accent-cyan);">D:\ 66% Libre</span></div>
+                    <div>ENLACE RED: <span style="color: #10b981;">FreeLLMAPI (18ms)</span></div>
+                </div>
             </div>
 
-            <!-- Hardware Telemetry Bars -->
-            <div class="kitt-card" role="region" aria-label="Selección de perfil de voz JARVIS">
+            <!-- Sistema de Calibración de Micrófono & Medidor dB -->
+            <div class="kitt-card">
                 <div class="card-header-mini">
-                    <span>TELEMETRÍA DE HARDWARE</span>
-                    <span class="status-badge cyan" id="telemetry-status">[ESTABLE]</span>
+                    <span>CALIBRACIÓN DE VOZ (dBFS)</span>
+                    <span class="status-badge purp">[ACTIVO]</span>
                 </div>
-                <div class="telemetry-item">
-                    <div class="tel-label"><span>CARGA CPU</span><span id="cpu-val">0%</span></div>
-                    <div class="progress-bar"><div class="fill" id="cpu-fill"></div></div>
-                </div>
-                <div class="telemetry-item">
-                    <div class="tel-label"><span>RAM NEURONAL</span><span id="ram-val">0 GB</span></div>
-                    <div class="progress-bar"><div class="fill" id="ram-fill"></div></div>
-                </div>
-                <div class="telemetry-item">
-                    <div class="tel-label"><span>ESTADO SERVICIOS</span></div>
-                    <div class="services-list">
-                        <span class="badge" id="badge-freellmapi">FreeLLMAPI</span>
-                        <span class="badge" id="badge-jarvis">JARVIS</span>
-                        <span class="badge" id="badge-searvga">SearVGA</span>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                    <button class="btn btn-ghost" id="start-calibration" style="width: 100%; font-size: 0.75rem; padding: 8px;">[ 🎙️ CALIBRAR MICRÓFONO ]</button>
+                    <div style="background: rgba(0,0,0,0.5); border: 1px solid var(--border-glow); padding: 8px; border-radius: 4px; font-family: var(--font-mono); font-size: 0.7rem;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                            <span>Nivel RMS:</span>
+                            <span id="db-level-text" style="color: var(--accent-cyan);">-48.2 dBFS</span>
+                        </div>
+                        <div style="width: 100%; height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden;">
+                            <div id="audio-meter-bar" style="width: 15%; height: 100%; background: var(--accent-cyan); transition: width 0.1s ease;"></div>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Voice Profiles Selector -->
-            <div class="kitt-card" role="region" aria-label="Selección de perfil de voz JARVIS">
+            <!-- Perfiles de Voz Neural -->
+            <div class="kitt-card">
                 <div class="card-header-mini">
-                    <span>PERFIL DE SÍNTESIS VOCAL</span>
+                    <span>PERFIL DE VOZ NEURAL</span>
                 </div>
                 <select id="voice-profile-select" class="kitt-select">
-                    <option value="jarvis">JARVIS (Protocolo Principal)</option>
-                    <option value="friday">F.R.I.D.A.Y. (Modo Táctico)</option>
-                    <option value="t800">T-800 Cyberdyne Systems</option>
-                    <option value="predator">Xeno-Matrix Depredador</option>
+                    <option value="jarvis">Jarvis Prime (Hombre estándar)</option>
+                    <option value="friday">Friday Protocol (Mujer optimizada)</option>
+                    <option value="t800">Terminator T-800 (Robótica / Ultra-grave)</option>
+                    <option value="predator">Depredador (Grave y gutural)</option>
+                    <option value="xenomatrix">Alien / Xeno-Matrix (Modulación espacial)</option>
+                    <option value="core">Máquina Core (Sintetizador metálico)</option>
+                    <option value="custom">[ ★ ] Clon de Voz Personalizado</option>
                 </select>
-                <div class="voice-controls">
-                    <label class="switch">
-                        <input type="checkbox" id="voice-toggle" checked>
-                        <span class="slider"></span>
-                        VOZ ACTIVADA
-                    </label>
-                </div>
-                <button id="start-calibration" class="btn btn-ghost full-width">
-                    CALIBRAR MICRÓFONO (4s RMS)
-                </button>
             </div>
 
-            <!-- Operations Log -->
-            <div class="kitt-card log-card" role="region" aria-label="Registro de operaciones JARVIS">
+            <!-- Registro de Operaciones -->
+            <div class="kitt-card log-card" style="flex: 1; min-height: 120px; display: flex; flex-direction: column;">
                 <div class="card-header-mini">
                     <span>REGISTRO DE OPERACIONES</span>
-                    <span class="status-badge purp" id="log-status">[EN VIVO]</span>
+                    <span class="status-badge purp">[EN VIVO]</span>
                 </div>
-                <div class="terminal-log-box" id="terminal-log">
+                <div id="holo-terminal-stream" style="font-family: var(--font-mono); font-size: 0.72rem; color: #00ffcc; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 4px;">
+                    <p class="log-line">[SYS_INIT] Núcleo K.I.T.T. sincronizado... OK</p>
+                    <p class="log-line">[READY] Esperando comandos de voz o texto...</p>
                 </div>
             </div>
         </aside>
 
-        <!-- COLUMNA DERECHA: Consola de Chat y Modulador K.I.T.T. -->
-        <main class="kitt-main">
-            <!-- Barra Superior de Control -->
-            <header class="kitt-topbar">
-                <div class="topbar-title">
-                    <h2>CONSOLA INTERACTIVA K.I.T.T.</h2>
-                    <p class="eyebrow">ENLACE NEURONAL DIRECTO CON JARVIS</p>
+        <!-- PANEL DERECHO: Consola Principal & Chat K.I.T.T. -->
+        <main class="kitt-main" style="display: flex; flex-direction: column; height: 100dvh; background: var(--bg-deep); overflow: hidden;">
+            <header style="padding: 16px 24px; border-bottom: 1px solid var(--border-glow); display: flex; justify-content: space-between; align-items: center; background: var(--panel-bg);">
+                <div>
+                    <h2 style="font-family: var(--font-mono); font-size: 1.1rem; color: var(--accent-cyan); margin: 0;">CONSOLA INTERACTIVA K.I.T.T.</h2>
+                    <span style="font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-dim);">ENLACE NEURONAL DIRECTO CON JARVIS</span>
                 </div>
-                <div class="topbar-actions">
-                    <button class="btn btn-ghost" id="clear-chat-btn" aria-label="Limpiar historial de chat">LIMPIAR</button>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <button class="btn btn-ghost" id="clear-chat-btn">LIMPIAR</button>
                     <button class="btn btn-ghost" id="export-session-btn">EXPORTAR</button>
-                    <div class="mic-status-indicator" id="mic-status-indicator">MIC: EN ESPERA</div>
+                    <div id="mic-status-indicator" style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--accent-purple); padding: 4px 10px; border: 1px solid var(--border-glow); border-radius: 4px;">MIC: EN ESPERA</div>
                 </div>
             </header>
 
-            <!-- El Modulador de Voz K.I.T.T. (14 barras LED horizontales) -->
-            <div class="kitt-modulator-container modo-espera" id="kitt-modulator">
-                <div class="kitt-led-label">MODULADOR K.I.T.T. // SÍNTESIS DE AUDIO</div>
-                <div class="kitt-led-bar" id="kitt-led-bar">
-                    <div class="led-segment"></div>
-                    <div class="led-segment"></div>
-                    <div class="led-segment"></div>
-                    <div class="led-segment"></div>
-                    <div class="led-segment"></div>
-                    <div class="led-segment"></div>
-                    <div class="led-segment"></div>
-                    <div class="led-segment"></div>
-                    <div class="led-segment"></div>
-                    <div class="led-segment"></div>
-                    <div class="led-segment"></div>
-                    <div class="led-segment"></div>
-                    <div class="led-segment"></div>
-                    <div class="led-segment"></div>
+            <!-- Modulador de Voz K.I.T.T. (Barra LED Dinámica) -->
+            <div id="kitt-modulator-bar" style="background: rgba(0,0,0,0.6); border-bottom: 1px solid var(--border-glow); padding: 12px 24px; display: flex; align-items: center; justify-content: center; gap: 6px;">
+                <div class="kitt-led" style="width: 24px; height: 8px; background: var(--accent-cyan); border-radius: 2px;"></div>
+                <div class="kitt-led" style="width: 24px; height: 8px; background: var(--accent-cyan); border-radius: 2px;"></div>
+                <div class="kitt-led" style="width: 24px; height: 8px; background: var(--accent-cyan); border-radius: 2px;"></div>
+                <div class="kitt-led" style="width: 24px; height: 8px; background: var(--accent-cyan); border-radius: 2px;"></div>
+                <div class="kitt-led" style="width: 24px; height: 8px; background: var(--accent-cyan); border-radius: 2px;"></div>
+                <div class="kitt-led" style="width: 24px; height: 8px; background: var(--accent-cyan); border-radius: 2px;"></div>
+                <div class="kitt-led" style="width: 24px; height: 8px; background: var(--accent-purple); border-radius: 2px;"></div>
+                <div class="kitt-led" style="width: 24px; height: 8px; background: var(--accent-purple); border-radius: 2px;"></div>
+                <div class="kitt-led" style="width: 24px; height: 8px; background: var(--accent-cyan); border-radius: 2px;"></div>
+                <div class="kitt-led" style="width: 24px; height: 8px; background: var(--accent-cyan); border-radius: 2px;"></div>
+                <div class="kitt-led" style="width: 24px; height: 8px; background: var(--accent-cyan); border-radius: 2px;"></div>
+                <div class="kitt-led" style="width: 24px; height: 8px; background: var(--accent-cyan); border-radius: 2px;"></div>
+                <div class="kitt-led" style="width: 24px; height: 8px; background: var(--accent-cyan); border-radius: 2px;"></div>
+                <div class="kitt-led" style="width: 24px; height: 8px; background: var(--accent-cyan); border-radius: 2px;"></div>
+            </div>
+
+            <!-- Historial de Chat / Interacción -->
+            <div id="chat-history" style="flex: 1; padding: 24px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; font-family: var(--font-sans);">
+                <div style="background: rgba(0, 229, 255, 0.05); border: 1px solid var(--border-glow); padding: 16px; border-radius: 8px; max-width: 80%;">
+                    <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--accent-cyan); margin-bottom: 6px;">[JARVIS SYSTEM]</div>
+                    <p style="margin: 0; font-size: 0.95rem;">Hola, Comandante. Todos los módulos (telemetría, discos, calibración dB y esfera 3D) están restaurados y sincronizados. ¿Qué orden ejecutamos hoy?</p>
                 </div>
             </div>
 
-            <!-- Área de Historial de Chat -->
-            <div class="kitt-chat-history" id="chat-history">
-                <div class="chat-bubble jarvis">
-                    <div class="bubble-sender">JARVIS // K.I.T.T. Core</div>
-                    <div class="bubble-text">Sistemas operativos activos. ¿Qué orden desea procesar, Comandante?</div>
-                </div>
-            </div>
-
-            <!-- Input Inferior de Chat -->
-            <div class="kitt-input-area">
-                <input type="text" id="chat-input" placeholder="Escriba un comando para JARVIS..." autocomplete="off">
-                <button id="chat-send-btn" class="btn btn-primary">TRANSMITIR</button>
+            <!-- Input de Comandos -->
+            <div style="padding: 16px 24px; background: var(--panel-bg); border-top: 1px solid var(--border-glow); display: flex; gap: 12px;">
+                <input type="text" id="chat-input" placeholder="Escribe un comando para JARVIS..." style="flex: 1; background: rgba(3,4,6,0.8); border: 1px solid var(--border-glow); color: #fff; padding: 12px 16px; font-family: var(--font-mono); font-size: 0.9rem; border-radius: var(--radius); outline: none;">
+                <button class="btn btn-primary" id="send-btn">ENVIAR</button>
             </div>
         </main>
     </div>
 
     <!-- Overlay de Esfera de Partículas 3D (Pantalla Completa) -->
     <div id="voice-overlay" class="voice-overlay">
-        <button id="close-overlay" class="close-overlay-btn" aria-label="Cerrar esfera">×</button>
-        <div class="voice-overlay-content">
-            <div class="voice-sphere">
-                <canvas id="particle-sphere-canvas"></canvas>
+        <button id="close-overlay" class="close-overlay-btn" aria-label="Cerrar esfera" onclick="window.closeOverlay()">×</button>
+        <div class="voice-overlay-content" style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%;">
+            <div class="voice-sphere" style="width: 500px; height: 500px;">
+                <canvas id="particle-sphere-canvas" width="500" height="500"></canvas>
             </div>
-            <div class="voice-status-hud">
-                <div class="hud-status" id="status-label">ESCUCHANDO...</div>
-                <div class="hud-transcript" id="transcript">Inicie un comando vocal...</div>
-            </div>
+            <div id="sphere-transcript" style="font-family: var(--font-mono); color: var(--accent-cyan); margin-top: 20px; font-size: 1.1rem;">[ESFERA 3D ACTIVA - INTERACCIÓN NEURAL]</div>
         </div>
     </div>
 
-    <script type="module" src="/assets/lib.js"></script>
+    <!-- Scripts Modulares del Ecosistema -->
+    <script type="module" src="/assets/jarvis.js"></script>
     <script type="module" src="/assets/sphere.js"></script>
     <script type="module" src="/assets/voice-manager.js"></script>
-    <script type="module" src="/assets/jarvis.js"></script>
+    <script>
+        // Funciones de control globales blindadas
+        window.openOverlay = function() {
+            const overlay = document.getElementById('voice-overlay');
+            if (overlay) {
+                overlay.style.display = 'flex';
+                setTimeout(() => overlay.classList.add('active'), 20);
+                // Forzar inicialización del canvas de la esfera si existe la función importada
+                if (typeof window.initCanvas === 'function') {
+                    window.initCanvas();
+                }
+                console.log('[NÚCLEO] Esfera 3D abierta');
+            }
+        };
+
+        window.closeOverlay = function() {
+            const overlay = document.getElementById('voice-overlay');
+            if (overlay) {
+                overlay.classList.remove('active');
+                setTimeout(() => overlay.style.display = 'none', 300);
+                console.log('[NÚCLEO] Esfera 3D cerrada');
+            }
+        };
+
+        // Enlace del botón de la esfera 3D
+        document.addEventListener('DOMContentLoaded', () => {
+            const launchBtn = document.getElementById('launch-voice-sphere-btn');
+            if (launchBtn) {
+                launchBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    window.openOverlay();
+                });
+            }
+
+            // Animación clásica de K.I.T.T. (barrido de LEDs)
+            const leds = document.querySelectorAll('.kitt-led');
+            let index = 0;
+            let direction = 1;
+            
+            setInterval(() => {
+                leds.forEach((led, idx) => {
+                    if (idx >= index && idx <= index + 2) {
+                        led.style.opacity = '1';
+                        led.style.background = '#00ffff';
+                        led.style.boxShadow = '0 0 15px #00ffff';
+                    } else {
+                        led.style.opacity = '0.3';
+                        led.style.background = 'var(--accent-cyan)';
+                        led.style.boxShadow = 'none';
+                    }
+                });
+
+                index += direction;
+                if (index >= leds.length - 2 || index <= 0) {
+                    direction *= -1;
+                }
+            }, 120);
+
+            // Lógica de Envío de Chat Interactivo con el Backend
+            const sendBtn = document.getElementById('send-btn');
+            const chatInput = document.getElementById('chat-input');
+            const chatHistory = document.getElementById('chat-history');
+
+            async function handleSendMessage() {
+                const text = chatInput.value.trim();
+                if (!text) return;
+
+                // Añadir mensaje del usuario
+                const userMsg = document.createElement('div');
+                userMsg.style.cssText = "background: rgba(157, 78, 221, 0.1); border: 1px solid var(--border-glow); padding: 12px 16px; border-radius: 8px; max-width: 80%; margin-left: auto; text-align: right;";
+                userMsg.innerHTML = `<div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--accent-purple); margin-bottom: 4px;">[COMANDANTE]</div><p style="margin: 0; font-size: 0.95rem;">${text}</p>`;
+                chatHistory.appendChild(userMsg);
+                chatInput.value = '';
+                chatHistory.scrollTop = chatHistory.scrollHeight;
+
+                try {
+                    const res = await fetch('/api/command', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ text })
+                    });
+                    const data = await res.json();
+                    const reply = data.reply || data.response || "Comando procesado correctamente por el núcleo K.I.T.T.";
+
+                    // Añadir respuesta de JARVIS
+                    const jarvisMsg = document.createElement('div');
+                    jarvisMsg.style.cssText = "background: rgba(0, 229, 255, 0.05); border: 1px solid var(--border-glow); padding: 16px; border-radius: 8px; max-width: 80%;";
+                    jarvisMsg.innerHTML = `<div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--accent-cyan); margin-bottom: 6px;">[JARVIS SYSTEM]</div><p style="margin: 0; font-size: 0.95rem;">${reply}</p>`;
+                    chatHistory.appendChild(jarvisMsg);
+                    chatHistory.scrollTop = chatHistory.scrollHeight;
+                } catch (err) {
+                    console.error('Error de comunicación:', err);
+                    const errMsg = document.createElement('div');
+                    errMsg.style.cssText = "background: rgba(239, 68, 68, 0.1); border: 1px solid #ef4444; padding: 16px; border-radius: 8px; max-width: 80%;";
+                    errMsg.innerHTML = `<div style="font-family: var(--font-mono); font-size: 0.75rem; color: #ef4444; margin-bottom: 6px;">[ERROR DE NÚCLEO]</div><p style="margin: 0; font-size: 0.95rem;">No se pudo conectar con el servidor local en el puerto 3002.</p>`;
+                    chatHistory.appendChild(errMsg);
+                }
+            }
+
+            if (sendBtn && chatInput) {
+                sendBtn.addEventListener('click', handleSendMessage);
+                chatInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') handleSendMessage();
+                });
+            }
+        });
+    </script>
 </body>
 </html>
