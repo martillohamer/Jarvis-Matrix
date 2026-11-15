@@ -284,6 +284,50 @@ function runMaintenance() {
   return `Hecho. He vaciado la caché DNS y borrado ${n} archivos temporales antiguos, unos ${Math.round(bytes / 1048576)} megas.`;
 }
 
+// ----------------------------- IA Pasarela -----------------------------------
+const FALLBACK_ROUTES = [
+  '/v1/chat/completions',
+  '/api/chat',
+  '/api/generate'
+];
+
+async function queryAI(text) {
+  const model = process.env.JARVIS_MODEL || process.env.MODEL || 'qwen2.5:3b';
+  console.log(`[NÚCLEO_IA] Solicitando respuesta a pasarela en ${FREELLM_URL}/v1/chat/completions (modelo: ${model})`);
+  try {
+    const res = await fetch(`${FREELLM_URL}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${API_KEY.trim()}`
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: text }],
+        stream: false
+      }),
+      signal: AbortSignal.timeout(30000)
+    });
+
+    if (!res.ok) {
+      throw new Error(`Respuesta HTTP no OK: status ${res.status}`);
+    }
+
+    const data = await res.json();
+    const content = data.choices?.[0]?.message?.content || data.reply || null;
+
+    if (!content) {
+      throw new Error('Estructura de respuesta no válida o contenido sin texto');
+    }
+
+    console.log(`[NÚCLEO_IA] Respuesta completada exitosamente desde el modelo ${model}`);
+    return content;
+  } catch (e) {
+    console.error(`[NÚCLEO_IA] Error en conexión con pasarela: ${e.message}`);
+    return null;
+  }
+}
+
 // ----------------------------- Motor de órdenes ------------------------------
 function normalize(text) {
   return String(text).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -436,6 +480,12 @@ async function handleCommand(raw) {
 
 // ----------------------------- API -------------------------------------------
 const GATEWAY_DOWN = 'Señor, la pasarela de IA no está disponible ahora mismo, pero los sistemas locales operan con normalidad.';
+const FALLBACK_RESPONSES = [
+  'Aquí el núcleo K.I.T.T., procesando información...',
+  'El sistema se encuentra estable, señor.',
+  '¿Hay algo más en lo que pueda ayudarle?',
+  'Sistemas operativos y telemetría en línea.'
+];
 const assistantMsg = (content, extra = {}) => ({ choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }], ...extra });
 const NET_CODES = new Set(['ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'TimeoutError', 'UND_ERR_CONNECT_TIMEOUT', 'EHOSTUNREACH']);
 
@@ -528,10 +578,29 @@ async function handleAPI(req, res, pathname) {
   }
   if (pathname === '/api/command' && req.method === 'POST') {
     const { text } = await readJSON(req);
-    if (typeof text !== 'string' || !text.trim() || text.length > 500) return sendJSON(res, 400, { error: 'Texto no válido' });
+    if (typeof text !== 'string' || !text.trim() || text.length > 500)
+      return sendJSON(res, 400, { error: 'Texto no válido' });
+    
+    // 1. Intentar responder mediante motor de órdenes de sistema local
     const result = await handleCommand(text);
-    if (result.handled) { log('CMD', `${result.risk || 'ok'} · ${text.slice(0, 80)}`); audit(`CMD [${result.risk || 'ok'}] "${text.slice(0, 120)}" -> ${result.reply.slice(0, 80)}`); }
-    return sendJSON(res, 200, { handled: result.handled, ...(result.handled ? { reply: result.reply } : {}) });
+    if (result.handled) {
+      log('CMD', `${result.risk || 'ok'} · ${text.slice(0, 80)}`);
+      audit(`CMD [${result.risk || 'ok'}] "${text.slice(0, 120)}" -> ${result.reply.slice(0, 80)}`);
+      return sendJSON(res, 200, { handled: true, reply: result.reply });
+    }
+
+    // 2. Consulta a la pasarela FreeLLMAPI / Ollama local
+    const aiResponse = await queryAI(text);
+    if (aiResponse) {
+      audit(`CMD [NÚCLEO_IA] "${text.slice(0, 120)}" -> ${aiResponse.slice(0, 80)}`);
+      return sendJSON(res, 200, { handled: true, reply: aiResponse });
+    }
+
+    // 3. Fallback inteligente en español cuando la pasarela no está disponible
+    console.log('[NÚCLEO_IA] Pasarela no disponible o error. Utilizando sistema de respaldo.');
+    const fallbackText = await getFallbackResponse(text);
+    audit(`CMD [FALLBACK] "${text.slice(0, 120)}" -> ${fallbackText.slice(0, 80)}`);
+    return sendJSON(res, 200, { handled: true, reply: fallbackText });
   }
   if (pathname === '/api/chat' && req.method === 'POST') return handleChat(req, res);
   if (pathname === '/api/execute' && req.method === 'POST') return handleExecute(req, res);
@@ -544,6 +613,22 @@ async function handleAPI(req, res, pathname) {
     }
   }
   return sendJSON(res, 404, { error: 'Not found' });
+}
+
+async function getFallbackResponse(text) {
+  const lower = text.toLowerCase();
+  if (/hola|buenos d[ií]as|buenas tardes|buenas noches|hey|qu[eé] tal/.test(lower)) {
+    return '¡Saludos! El sistema K.I.T.T. se encuentra plenamente operativo.';
+  }
+  if (/hora|qu[eé] hora es/.test(lower)) {
+    const { hora } = dateTime();
+    return `La hora actual del sistema es ${hora}.`;
+  }
+  if (/telemetr[ií]a|estado|sistema|diagn[oó]stico|rendimiento/.test(lower)) {
+    const s = await getSystemStatus();
+    return `Telemetría local: CPU al ${s.cpu}%, Memoria RAM al ${s.ramUsed}%.`;
+  }
+  return FALLBACK_RESPONSES[Math.floor(Math.random() * FALLBACK_RESPONSES.length)];
 }
 
 // ----------------------------- Archivos estáticos ----------------------------
