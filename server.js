@@ -150,7 +150,7 @@ const openTarget = (t) => runDetached('rundll32', ['url.dll,FileProtocolHandler'
 const openFolder = (p) => runDetached('explorer.exe', [p]);
 const startSearvga = () => {
   runDetached('cmd.exe', ['/c', 'start', '', 'Iniciar_SearVGA.bat'], { cwd: SEARVGA_DIR, windowsHide: true });
-  setTimeout(() => openTarget('http://localhost:8889'), 4000);
+  setTimeout(() => openTarget('http://127.0.0.1:8890'), 4000);
 };
 
 // ----------------------------- Información real ------------------------------
@@ -242,7 +242,7 @@ async function probeFreeLLM(ms = 4000) {
 }
 
 async function getSystemStatus() {
-  const [stats, llm, searvga] = await Promise.all([cpuStats(), probeFreeLLM(1000), probeUrl('http://127.0.0.1:8889/')]);
+  const [stats, llm, searvga] = await Promise.all([cpuStats(), probeFreeLLM(1000), probeUrl('http://127.0.0.1:8890/health')]);
   
   if (llm.online !== freellmLastState) {
     if (!llm.online) freellmJitterCount += 1;
@@ -262,7 +262,7 @@ async function getSystemStatus() {
     services: [
       { name: 'FreeLLMAPI', port: 3001, up: llm.online },
       { name: 'JARVIS', port: PORT, up: true },
-      { name: 'SearVGA', port: 8889, up: searvga },
+      { name: 'SearVGA', port: 8890, up: searvga },
     ],
   };
 }
