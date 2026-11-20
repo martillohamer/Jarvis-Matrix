@@ -1,668 +1,298 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="es" translate="no">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>JARVIS Demo --- Local Voice Agent</title>
-<meta name="description" content="A free, multilingual, local-first AI chatbot and advanced voice agent for Windows. It replies out loud in your own language — English, Italian, Spanish, French, Portuguese, Hindi — running entirely on your machine. No account, no cloud.">
-<meta property="og:title" content="JARVIS Demo --- Local Voice Agent">
-<meta property="og:description" content="A free, multilingual AI chatbot and advanced voice mode that runs entirely on your own computer. Speaks your language. No account, no cloud.">
-<meta property="og:type" content="website">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/styles.css">
-<link rel="icon" href="data:,">
-<script type="module">
-  import { JarvisAPI, setMode, getMode } from './assets/jarvis.js';
-  import { VoiceManager } from './assets/voice-manager.js';
-  
-  const jarvis = new JarvisAPI();
-  const voice = new VoiceManager();
-  voice.setLanguage('es-ES');
-  
-  jarvis.setMode(getMode());
-  
-  let consoleOpen = false;
-  
-  function createConsole() {
-    const panel = document.createElement('div');
-    panel.className = 'console-panel';
-    panel.innerHTML = `
-      <div class="console-header">
-        <h3>JARVIS-MATRIX Console</h3>
-        <div style="display:flex;gap:8px;align-items:center">
-          <div class="state-indicator" id="api-status" title="API Status">
-            <span class="state-dot offline"></span>
-            <span>API</span>
-          </div>
-          <div class="state-indicator" id="voice-status" title="Voice Status">
-            <span class="state-dot offline"></span>
-            <span>Voice</span>
-          </div>
-          <div class="state-indicator" id="jarvis-status" title="Jarvis Service">
-            <span class="state-dot online"></span>
-            <span>Jarvis</span>
-          </div>
-          <div class="state-indicator" id="freellm-status" title="FreeLLM Service">
-            <span class="state-dot offline"></span>
-            <span>FreeLLM</span>
-          </div>
-          <button class="console-close" aria-label="Close console">&times;</button>
-        </div>
-      </div>
-      <div class="telemetry-bar">
-        <div id="telemetry-alert" class="telemetry-alert">
-          <span>⚠ Inestabilidad detectada (FreeLLMAPI)</span>
-          <span id="jitter-val"></span>
-        </div>
-        <div class="telemetry-row">
-          <span>CPU Threads</span>
-          <div class="cpu-threads-container" id="cpu-threads"></div>
-        </div>
-        <div class="telemetry-row">
-          <span>RAM / Disk</span>
-          <span style="font-size:12px;color:var(--text-dim)">
-            RAM: <span id="hud-ram">--%</span> | D: <span id="hud-disk">--%</span>
-          </span>
-        </div>
-      </div>
-      <div class="console-messages" id="console-messages">
-        <div class="msg system">Sistemas inicializados. Conectando a http://localhost:3002...</div>
-      </div>
-      <div class="console-input">
-        <input type="text" id="console-input" placeholder="Message JARVIS..." autocomplete="off">
-        <button id="console-send">Enviar</button>
-        <button class="speaker-btn" id="voice-toggle" title="Toggle voice">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
-        </button>
-        <select id="mode-select" title="Cambiar modo">
-          <option value="assistant">Asistente</option>
-          <option value="friend">Amigo</option>
-          <option value="study">Estudio</option>
-        </select>
-      </div>
-    `;
-    document.body.appendChild(panel);
-    return panel;
-  }
-  
-  let apiOnline = false;
-  
-  async function checkAPIStatus() {
-    const status = document.getElementById('api-status');
-    const dot = status?.querySelector('.state-dot');
-    try {
-      const ok = await jarvis.checkAvailability();
-      if (ok && dot) {
-        dot.className = 'state-dot online';
-        status.querySelector('span:last-child').textContent = 'API';
-        apiOnline = true;
-      } else if (dot && !apiOnline) {
-        dot.className = 'state-dot offline';
-        status.querySelector('span:last-child').textContent = 'API';
-        addMessage('system', '✗ FreeLLMAPI no disponible. Asegúrate de que el servidor JARVIS esté corriendo en http://localhost:3002');
-      }
-    } catch (e) {
-      if (dot && !apiOnline) dot.className = 'state-dot offline';
-    }
-  }
-  
-  async function updateHUD() {
-    try {
-      const res = await fetch(`${jarvis.endpoint}/api/system-status`);
-      const data = await res.json();
-      
-      const jarvisDot = document.getElementById('jarvis-status')?.querySelector('.state-dot');
-      if (jarvisDot) jarvisDot.className = data.services?.find(s => s.port === 3002)?.up ? 'state-dot online' : 'state-dot offline';
-      
-      const fllmmDot = document.getElementById('freellm-status')?.querySelector('.state-dot');
-      if (fllmmDot) fllmmDot.className = data.services?.find(s => s.port === 3001)?.up ? 'state-dot online' : 'state-dot offline';
-      
-      const alert = document.getElementById('telemetry-alert');
-      if (alert) {
-        if (data.freellmJitter > 0) {
-            alert.classList.add('active');
-            document.getElementById('jitter-val').textContent = `(x${data.freellmJitter})`;
-        } else {
-            alert.classList.remove('active');
-        }
-      }
-      
-      const cpuContainer = document.getElementById('cpu-threads');
-      if (cpuContainer) {
-        cpuContainer.innerHTML = '';
-        data.cpuThreads.forEach(load => {
-          const bar = document.createElement('div');
-          bar.className = 'thread-bar';
-          bar.style.height = `${Math.max(2, load)}%`;
-          cpuContainer.appendChild(bar);
-        });
-      }
-      
-      const ramEl = document.getElementById('hud-ram');
-      if (ramEl) ramEl.textContent = `${data.ramUsed}%`;
-      
-      const diskEl = document.getElementById('hud-disk');
-      if (diskEl) diskEl.textContent = `${data.diskPct}%`;
-    } catch (e) {
-      console.error('HUD update error:', e);
-    }
-  }
-  
-  function updateModeDisplay() {
-    const modeName = document.getElementById('mode-name');
-    const modeMap = { assistant: 'Asistente', friend: 'Amigo', study: 'Estudio' };
-    if (modeName) modeName.textContent = modeMap[jarvis.getMode()] || 'Asistente';
-  }
-  
-  function addMessage(role, content) {
-    const container = document.getElementById('console-messages');
-    if (!container) return;
-    const msg = document.createElement('div');
-    msg.className = `msg ${role}`;
-    msg.textContent = content;
-    container.appendChild(msg);
-    container.scrollTop = container.scrollHeight;
-  }
-  
-  async function sendMessage(text, fromVoice = false) {
-    if (!text.trim()) return;
-    addMessage('user', text);
-    
-    const thinkingMsg = document.createElement('div');
-    thinkingMsg.className = 'msg thinking';
-    thinkingMsg.textContent = 'Pensando...';
-    const container = document.getElementById('console-messages');
-    if (container) {
-      container.appendChild(thinkingMsg);
-      container.scrollTop = container.scrollHeight;
-    }
-    
-    try {
-      const cmdResult = await jarvis.checkCommand(text);
-      
-      if (cmdResult.handled) {
-        if (container && thinkingMsg.parentNode) {
-          thinkingMsg.parentNode.removeChild(thinkingMsg);
-        }
-        addMessage('assistant', cmdResult.reply);
-        voice.speak(cmdResult.reply);
-        return;
-      }
-      
-      const response = await jarvis.chat(text);
-      if (container && thinkingMsg.parentNode) {
-        thinkingMsg.parentNode.removeChild(thinkingMsg);
-      }
-      addMessage('assistant', response);
-      
-      if (fromVoice) {
-        voice.speak(response);
-      } else {
-        const voiceToggle = document.getElementById('voice-toggle');
-        if (voiceToggle?.classList.contains('active')) {
-          voice.speak(response);
-        }
-      }
-    } catch (e) {
-      if (container && thinkingMsg.parentNode) {
-        thinkingMsg.parentNode.removeChild(thinkingMsg);
-      }
-      addMessage('system', `Error: ${e.message}`);
-    }
-  }
-  
-  voice.on('onStart', () => {
-    const dot = document.getElementById('voice-status')?.querySelector('.state-dot');
-    const sphere = document.getElementById('voice-sphere');
-    if (dot) dot.className = 'state-dot listening';
-    if (sphere) sphere.classList.add('listening');
-  });
-  
-  voice.on('onEnd', () => {
-    const dot = document.getElementById('voice-status')?.querySelector('.state-dot');
-    const sphere = document.getElementById('voice-sphere');
-    if (dot) dot.className = 'state-dot online';
-    if (sphere) sphere.classList.remove('listening');
-  });
-  
-  voice.on('onSynthesisStart', () => {
-    const dot = document.getElementById('voice-status')?.querySelector('.state-dot');
-    const sphere = document.getElementById('voice-sphere');
-    if (dot) dot.className = 'state-dot speaking';
-    if (sphere) sphere.classList.add('speaking');
-  });
-  
-  voice.on('onSynthesisEnd', () => {
-    const dot = document.getElementById('voice-status')?.querySelector('.state-dot');
-    const sphere = document.getElementById('voice-sphere');
-    if (dot) dot.className = 'state-dot online';
-    if (sphere) sphere.classList.remove('speaking');
-  });
-  
-  voice.on('onError', (err) => {
-    const dot = document.getElementById('voice-status')?.querySelector('.state-dot');
-    const sphere = document.getElementById('voice-sphere');
-    if (dot) dot.className = 'state-dot offline';
-    if (sphere) sphere.classList.remove('listening', 'speaking');
-    addMessage('system', `Voice error: ${err.message}`);
-  });
-  
-  document.addEventListener('DOMContentLoaded', () => {
-    const panel = createConsole();
-    
-    const history = jarvis.getHistory();
-    if (history.length > 0) {
-      history.forEach(m => {
-        if (m.role !== 'system') addMessage(m.role, m.content);
-      });
-    }
-
-    checkAPIStatus();
-    updateModeDisplay();
-    
-    const modeSelect = document.getElementById('mode-select');
-    if (modeSelect) {
-      modeSelect.value = jarvis.getMode();
-      modeSelect.addEventListener('change', () => {
-        jarvis.setMode(modeSelect.value);
-        localStorage.setItem('jarvis_mode', modeSelect.value);
-        updateModeDisplay();
-      });
-    }
-    
-    const sphere = document.getElementById('voice-sphere');
-    sphere?.addEventListener('click', () => {
-      if (sphere.classList.contains('listening')) {
-        voice.stopListening();
-      } else {
-        voice.listen((transcript) => {
-          const input = panel.querySelector('#console-input');
-          if (input) input.value = transcript;
-          sendMessage(transcript, true);
-        });
-      }
-    });
-    
-    document.querySelector('.btn-primary')?.addEventListener('click', (e) => {
-      e.preventDefault();
-      panel.style.display = 'flex';
-      consoleOpen = true;
-    });
-    
-    panel.querySelector('.console-close')?.addEventListener('click', () => {
-      panel.style.display = 'none';
-      consoleOpen = false;
-    });
-    
-    const input = panel.querySelector('#console-input');
-    const sendBtn = panel.querySelector('#console-send');
-    const send = () => {
-      const text = input.value.trim();
-      if (text) {
-        sendMessage(text, false);
-        input.value = '';
-      }
-    };
-    
-    sendBtn?.addEventListener('click', send);
-    input?.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') send();
-    });
-    
-    // Voice toggle
-    const voiceToggle = panel.querySelector('#voice-toggle');
-    voiceToggle?.addEventListener('click', () => {
-      voiceToggle.classList.toggle('active');
-    });
-
-    // Calibración de Micrófono Web Audio API
-    const calibBtn = document.getElementById('start-calibration');
-    const meterContainer = document.getElementById('meter-container');
-    const audioMeter = document.getElementById('audio-meter');
-    const diagStatus = document.getElementById('diag-status');
-
-    if (calibBtn && audioMeter && diagStatus) {
-      audioMeter.innerHTML = '';
-      for (let i = 0; i < 20; i++) {
-        const bar = document.createElement('div');
-        bar.className = 'meter-bar';
-        audioMeter.appendChild(bar);
-      }
-
-      calibBtn.addEventListener('click', async () => {
-        try {
-          calibBtn.style.display = 'none';
-          meterContainer.style.display = 'block';
-          diagStatus.textContent = 'Iniciando diagnóstico... Solicitando micrófono.';
-
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-          const analyser = audioCtx.createAnalyser();
-          const source = audioCtx.createMediaStreamSource(stream);
-          analyser.fftSize = 256;
-          source.connect(analyser);
-
-          const bufferLength = analyser.frequencyBinCount;
-          const dataArray = new Uint8Array(bufferLength);
-
-          let startTime = Date.now();
-          let dbSum = 0;
-          let samplesCount = 0;
-
-          diagStatus.textContent = 'Analizando ondas vocales... Hable ahora.';
-
-          const bars = audioMeter.querySelectorAll('.meter-bar');
-
-          const updateMeter = () => {
-            analyser.getByteFrequencyData(dataArray);
-            let sum = 0;
-            for (let i = 0; i < bufferLength; i++) {
-              sum += dataArray[i];
-            }
-            let avg = sum / bufferLength;
-            let db = 20 * Math.log10(avg / 255 || 0.001);
-
-            dbSum += db;
-            samplesCount++;
-
-            const activeBars = Math.floor((avg / 255) * bars.length);
-            bars.forEach((b, idx) => {
-              if (idx < activeBars) {
-                b.style.background = idx > 15 ? 'var(--accent-fire)' : idx > 10 ? 'var(--accent-purple)' : 'var(--accent-cyan)';
-                b.style.boxShadow = '0 0 10px var(--accent-cyan)';
-              } else {
-                b.style.background = 'rgba(255,255,255,0.08)';
-                b.style.boxShadow = 'none';
-              }
-            });
-
-            if (Date.now() - startTime < 4000) {
-              requestAnimationFrame(updateMeter);
-            } else {
-              stream.getTracks().forEach(t => t.stop());
-              audioCtx.close();
-
-              const finalDb = dbSum / (samplesCount || 1);
-
-              if (finalDb < -45) {
-                diagStatus.textContent = 'Señor, la señal es débil. Hable un poco más fuerte o acérquese al micro.';
-                voice.speak('Señor, la señal es débil. Hable un poco más fuerte o acérquese al micro.');
-              } else if (finalDb >= -45 && finalDb < -25) {
-                diagStatus.textContent = 'Falta un poco más de potencia, casi estamos en el punto óptimo.';
-                voice.speak('Falta un poco más de potencia, casi estamos en el punto óptimo.');
-              } else {
-                diagStatus.textContent = 'Calibración completada con éxito. Potencia de ascuas al 100%. Sistema listo.';
-                voice.speak('Calibración completada con éxito. Potencia de ascuas al 100%. Sistema listo.');
-              }
-
-              calibBtn.style.display = 'inline-flex';
-              calibBtn.textContent = '[ Repetir Calibración ]';
-            }
-          };
-
-          updateMeter();
-        } catch (e) {
-          diagStatus.textContent = `Error de acceso al micrófono: ${e.message}`;
-          calibBtn.style.display = 'inline-flex';
-        }
-      });
-    }
-    
-    setInterval(checkAPIStatus, 30000);
-    setInterval(updateHUD, 10000);
-    updateHUD();
-  });
-</script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="google" content="notranslate">
+    <title>JARVIS SLAYERS // Consola K.I.T.T. Nivel DIOS</title>
+    <link rel="stylesheet" href="/assets/styles.css">
 </head>
 <body>
 
-<div class="main-layout">
-  <header class="nav">
-    <div class="wrap nav-in">
-      <div class="brand">J<b>.</b>A<b>.</b>R<b>.</b>V<b>.</b>I<b>.</b>S<b>.</b> <span style="color:var(--text-dim)">DEMO</span></div>
-      <nav class="nav-links">
-        <a href="#features">Características</a>
-        <a href="#how">Cómo funciona</a>
-        <a href="#requirements">Requisitos</a>
-        <a href="https://github.com/martillohamer/Jarvis-Matrix">GitHub</a>
-      </nav>
+    <div class="kitt-app-container">
+        <!-- SIDEBAR IZQUIERDO: Telemetría, Discos, Calibración de Voz y Perfiles -->
+        <aside class="kitt-sidebar">
+            <div class="kitt-brand">
+                <span class="pulse-dot"></span>
+                JARVIS <b>SLAYERS</b> <span class="version-tag">v3.5 K.I.T.T.</span>
+            </div>
+
+            <!-- Lanzador de Esfera 3D -->
+            <button class="kitt-card sphere-launch-card" id="launch-voice-sphere-btn">
+                <div class="card-header-mini">
+                    <span>NÚCLEO HOLOGRÁFICO</span>
+                    <span class="status-badge" id="sphere-status">[EN LÍNEA]</span>
+                </div>
+                <div class="sphere-preview-container">
+                    <div class="holo-ring"></div>
+                    <div class="holo-core"></div>
+                    <div class="sphere-label">ACTIVAR ESFERA 3D</div>
+                </div>
+            </button>
+
+            <!-- Telemetría de Hardware & Discos Duros -->
+            <div class="kitt-card">
+                <div class="card-header-mini">
+                    <span>ESTADO & DISCOS DUROS</span>
+                    <span class="status-badge cyan">[ESTABLE]</span>
+                </div>
+                <div style="font-family: var(--font-mono); font-size: 0.78rem; display: flex; flex-direction: column; gap: 6px;">
+                    <div>CPU (12 Hilos): <span id="tele-cpu" style="color: var(--accent-cyan);">14.2%</span>
+                        <div style="height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; margin-top: 3px;">
+                            <div id="cpu-fill" style="height: 100%; background: var(--accent-cyan); width: 14%;"></div>
+                        </div>
+                    </div>
+                    <div>MEMORIA RAM: <span id="tele-ram" style="color: var(--accent-cyan);">8.4 / 16.0 GB (52%)</span>
+                        <div style="height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; margin-top: 3px;">
+                            <div id="ram-fill" style="height: 100%; background: var(--accent-purple); width: 52%;"></div>
+                        </div>
+                    </div>
+                    <div>DISCO PRINCIPAL: <span id="tele-disk" style="color: var(--accent-cyan);">D:\ 66% Libre</span></div>
+                    <div>ENLACE RED: <span id="tele-freellm-latency" style="color: #10b981;">FreeLLMAPI (18ms)</span></div>
+                    <div>SEARVGA: <span id="tele-searvga-latency" style="color: #10b981;">SearVGA (8890)</span></div>
+                    <div style="margin-top: 4px; font-size: 0.68rem; color: var(--text-dim);">Sistema: <span id="telemetry-status" style="color: #10b981;">[ESTABLE]</span></div>
+                </div>
+            </div>
+
+            <!-- Sistema de Calibración de Micrófono & Medidor dB -->
+            <div class="kitt-card">
+                <div class="card-header-mini">
+                    <span>CALIBRACIÓN DE VOZ (dBFS)</span>
+                    <span class="status-badge purp">[ACTIVO]</span>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                    <button class="btn btn-ghost" id="start-calibration" style="width: 100%; font-size: 0.75rem; padding: 8px;">[ 🎙️ CALIBRAR MICRÓFONO ]</button>
+                    <div style="background: rgba(0,0,0,0.5); border: 1px solid var(--border-glow); padding: 8px; border-radius: 4px; font-family: var(--font-mono); font-size: 0.7rem;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                            <span>Nivel RMS:</span>
+                            <span id="db-level-text" style="color: var(--accent-cyan);">-48.2 dBFS</span>
+                        </div>
+                        <div style="width: 100%; height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden;">
+                            <div id="audio-meter-bar" style="width: 15%; height: 100%; background: var(--accent-cyan); transition: width 0.1s ease;"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Perfiles de Voz Neural -->
+            <div class="kitt-card">
+                <div class="card-header-mini">
+                    <span>PERFIL DE VOZ NEURAL</span>
+                </div>
+                <select id="voice-profile-select" class="kitt-select">
+                    <option value="jarvis">Jarvis Prime (Hombre estándar)</option>
+                    <option value="friday">Friday Protocol (Mujer optimizada)</option>
+                    <option value="t800">Terminator T-800 (Robótica / Ultra-grave)</option>
+                    <option value="predator">Depredador (Grave y gutural)</option>
+                    <option value="xenomatrix">Alien / Xeno-Matrix (Modulación espacial)</option>
+                    <option value="core">Máquina Core (Sintetizador metálico)</option>
+                    <option value="custom">[ ★ ] Clon de Voz Personalizado</option>
+                </select>
+            </div>
+
+            <!-- Registro de Operaciones -->
+            <div class="kitt-card log-card" style="flex: 1; min-height: 120px; display: flex; flex-direction: column;">
+                <div class="card-header-mini">
+                    <span>REGISTRO DE OPERACIONES</span>
+                    <span class="status-badge purp">[EN VIVO]</span>
+                </div>
+                <div id="holo-terminal-stream" style="font-family: var(--font-mono); font-size: 0.72rem; color: #00ffcc; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 4px;">
+                    <p class="log-line">[SYS_INIT] Núcleo K.I.T.T. sincronizado... OK</p>
+                    <p class="log-line">[READY] Esperando comandos de voz o texto...</p>
+                </div>
+            </div>
+        </aside>
+
+        <!-- PANEL DERECHO: Consola Principal & Chat K.I.T.T. -->
+        <main class="kitt-main" style="display: flex; flex-direction: column; height: 100dvh; background: var(--bg-deep); overflow: hidden;">
+            <header style="padding: 16px 24px; border-bottom: 1px solid var(--border-glow); display: flex; justify-content: space-between; align-items: center; background: var(--panel-bg);">
+                <div>
+                    <h2 style="font-family: var(--font-mono); font-size: 1.1rem; color: var(--accent-cyan); margin: 0;">CONSOLA INTERACTIVA K.I.T.T.</h2>
+                    <span style="font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-dim);">ENLACE NEURONAL DIRECTO CON JARVIS</span>
+                </div>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <button class="btn btn-ghost" id="clear-chat-btn">LIMPIAR</button>
+                    <button class="btn btn-ghost" id="export-session-btn">EXPORTAR</button>
+                    <div id="mic-status-indicator" style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--accent-purple); padding: 4px 10px; border: 1px solid var(--border-glow); border-radius: 4px;">MIC: EN ESPERA</div>
+                </div>
+            </header>
+
+            <!-- Modulador de Voz K.I.T.T. (Barra LED Dinámica) -->
+            <div id="kitt-modulator-bar" style="background: rgba(0,0,0,0.6); border-bottom: 1px solid var(--border-glow); padding: 12px 24px; display: flex; align-items: center; justify-content: center; gap: 6px;">
+                <div class="kitt-led" style="width: 24px; height: 8px; background: var(--accent-cyan); border-radius: 2px;"></div>
+                <div class="kitt-led" style="width: 24px; height: 8px; background: var(--accent-cyan); border-radius: 2px;"></div>
+                <div class="kitt-led" style="width: 24px; height: 8px; background: var(--accent-cyan); border-radius: 2px;"></div>
+                <div class="kitt-led" style="width: 24px; height: 8px; background: var(--accent-cyan); border-radius: 2px;"></div>
+                <div class="kitt-led" style="width: 24px; height: 8px; background: var(--accent-cyan); border-radius: 2px;"></div>
+                <div class="kitt-led" style="width: 24px; height: 8px; background: var(--accent-cyan); border-radius: 2px;"></div>
+                <div class="kitt-led" style="width: 24px; height: 8px; background: var(--accent-purple); border-radius: 2px;"></div>
+                <div class="kitt-led" style="width: 24px; height: 8px; background: var(--accent-purple); border-radius: 2px;"></div>
+                <div class="kitt-led" style="width: 24px; height: 8px; background: var(--accent-cyan); border-radius: 2px;"></div>
+                <div class="kitt-led" style="width: 24px; height: 8px; background: var(--accent-cyan); border-radius: 2px;"></div>
+                <div class="kitt-led" style="width: 24px; height: 8px; background: var(--accent-cyan); border-radius: 2px;"></div>
+                <div class="kitt-led" style="width: 24px; height: 8px; background: var(--accent-cyan); border-radius: 2px;"></div>
+                <div class="kitt-led" style="width: 24px; height: 8px; background: var(--accent-cyan); border-radius: 2px;"></div>
+                <div class="kitt-led" style="width: 24px; height: 8px; background: var(--accent-cyan); border-radius: 2px;"></div>
+            </div>
+
+            <!-- Historial de Chat / Interacción -->
+            <div id="chat-history" style="flex: 1; padding: 24px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; font-family: var(--font-sans);">
+                <div style="background: rgba(0, 229, 255, 0.05); border: 1px solid var(--border-glow); padding: 16px; border-radius: 8px; max-width: 80%;">
+                    <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--accent-cyan); margin-bottom: 6px;">[JARVIS SYSTEM]</div>
+                    <p style="margin: 0; font-size: 0.95rem;">Hola, Comandante. Todos los módulos (telemetría, discos, calibración dB y esfera 3D) están restaurados y sincronizados. ¿Qué orden ejecutamos hoy?</p>
+                </div>
+            </div>
+
+            <!-- Input de Comandos -->
+            <div style="padding: 16px 24px; background: var(--panel-bg); border-top: 1px solid var(--border-glow); display: flex; gap: 12px;">
+                <input type="text" id="chat-input" placeholder="Escribe un comando para JARVIS..." style="flex: 1; background: rgba(3,4,6,0.8); border: 1px solid var(--border-glow); color: #fff; padding: 12px 16px; font-family: var(--font-mono); font-size: 0.9rem; border-radius: var(--radius); outline: none;">
+                <button class="btn btn-primary" id="send-btn">ENVIAR</button>
+            </div>
+        </main>
     </div>
-  </header>
 
-  <main>
-    <section class="hero">
-      <div class="wrap">
-        <p class="eyebrow">Free · Unlimited</p>
-        <h1>An AI that <span class="grad">speaks your language</span>,<br>running on your machine</h1>
-        <p class="lede">A free chatbot and advanced voice mode for Windows. Write or speak in your
-          language — Jarvis replies in text and out loud, in that same language, with a native
-          voice and his trademark dry wit. No account, no API key, no cloud, no telemetry.</p>
-        <div class="cta">
-          <button class="btn btn-primary">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
-            Open Console
-          </button>
-          <a class="btn btn-ghost" href="#how">How it works</a>
+    <!-- Overlay de Esfera de Partículas 3D (Pantalla Completa) -->
+    <div id="voice-overlay" class="voice-overlay">
+        <button id="close-overlay" class="close-overlay-btn" aria-label="Cerrar esfera" onclick="window.closeOverlay()">×</button>
+        <div class="voice-overlay-content" style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%;">
+            <div class="voice-sphere" style="width: 500px; height: 500px;">
+                <canvas id="particle-sphere-canvas" width="500" height="500"></canvas>
+            </div>
+            <div id="sphere-transcript" style="font-family: var(--font-mono); color: var(--accent-cyan); margin-top: 20px; font-size: 1.1rem;">[ESFERA 3D ACTIVA - INTERACCIÓN NEURAL]</div>
+                    <div id="sphere-status-label" style="font-family: var(--font-mono); color: var(--accent-purple); margin-top: 8px; font-size: 0.8rem;">[ESPERANDO ORDEN] ·</div>
         </div>
-        <p class="cta-note">Windows 10 / 11 · arranque con FreeLLMAPI y núcleo local</p>
-        <div class="langs">
-          <span class="lang">🇬🇧 English</span>
-          <span class="lang">🇮🇹 Italiano</span>
-          <span class="lang">🇪🇸 Español</span>
-          <span class="lang">🇫🇷 Français</span>
-          <span class="lang">🇧🇷 Português</span>
-          <span class="lang">🇮🇳 हिन्दी</span>
-        </div>
-      </div>
-    </section>
-
-    <section class="demo" aria-label="Demo video">
-      <div class="wrap">
-        <figure class="shot">
-          <video class="video-responsive" controls preload="metadata" playsinline poster="data:image/svg+xml;charset=utf-8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 9' fill='%230a1128'><rect width='16' height='9'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' fill='%2300e5ff' font-family='monospace' font-size='0.8'>JARVIS 4K PRESENTATION STREAM</text></svg>">
-            <source src="docs/media/JARVIS-Presentation-4K.mp4" type="video/mp4">
-            Your browser cannot play embedded video. <a href="docs/media/JARVIS-Presentation-4K.mp4">Download the demo video</a>.
-          </video>
-          <figcaption><b>Watch the demo</b> --- JARVIS in action.</figcaption>
-        </figure>
-      </div>
-    </section>
-
-    <section class="shots" aria-label="Screenshots">
-      <div class="wrap shots-grid">
-        <figure class="shot">
-          <div class="hologram-card-placeholder">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="1.5">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-              <polyline points="7 10 12 15 17 10"></polyline>
-              <line x1="12" y1="15" x2="12" y2="3"></line>
-            </svg>
-            <div class="hologram-title">NEURAL CHAT HUD</div>
-            <div class="hologram-sub">Streamed LLM responses in real-time</div>
-          </div>
-          <figcaption><b>Chat</b> --- streamed replies from a local model, in your language.</figcaption>
-        </figure>
-        <figure class="shot">
-          <div class="hologram-card-placeholder">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--accent-purple)" stroke-width="1.5">
-              <circle cx="12" cy="12" r="9"></circle>
-              <path d="M12 3v18"></path>
-              <path d="M3 12h18"></path>
-              <path d="M12 8l4 4-4 4"></path>
-            </svg>
-            <div class="hologram-title">QUANTUM VOICE SPHERE</div>
-            <div class="hologram-sub">Full-screen reactive particle audio node</div>
-          </div>
-          <figcaption><b>Advanced voice mode</b> --- a full-screen sphere with neural turn detection.</figcaption>
-        </figure>
-      </div>
-    </section>
-
-      <section id="calibration" class="calibration">
-    <div class="wrap">
-      <div class="sec-head" style="text-align: center; margin-bottom: 40px;">
-        <p class="eyebrow">Diagnostic mode</p>
-        <h2>SISTEMA DE CALIBRACIÓN DE VOZ</h2>
-        <p>Diagnóstico táctico de entrada de audio para optimización neural.</p>
-      </div>
-      <div class="card" style="max-width: 600px; margin: 0 auto; text-align: center;">
-        <button id="start-calibration" class="btn btn-primary" style="margin-bottom: 24px;">[ Iniciar Calibración de Micrófono ]</button>
-        <div id="meter-container" style="display: none;">
-          <div class="audio-meter" id="audio-meter"></div>
-          <div id="diag-status" style="font-family: var(--font-mono); color: var(--accent-cyan); margin-top: 16px;">Iniciando diagnóstico...</div>
-        </div>
-      </div>
     </div>
-  </section>
 
-<section class="features">
-      <div class="card fade-in">
-        <div class="ic">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
-        </div>
-        <h3>Multi-idioma</h3>
-        <p>JARVIS detecta y responde en tu idioma: Inglés, Italiano, Español, Francés, Portugués y Hindi. Voz local sin traducción en la nube.</p>
-      </div>
-      <div class="card fade-in">
-        <div class="ic">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
-        </div>
-        <h3>Comandos instantáneos</h3>
-        <p>Hora, clima (Oviedo), abrir YouTube/Netflix/Spotify/Disney, y apagado seguro con confirmación por voz.</p>
-      </div>
-      <div class="card fade-in">
-        <div class="ic">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
-        </div>
-        <h3>Modo voz avanzado</h3>
-        <p>Esfera de partículas con detección neural. Habla o mantén pulsada la barra espaciadora.</p>
-      </div>
-      <div class="card fade-in">
-        <div class="ic">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg>
-        </div>
-        <h3>IA local</h3>
-        <p>Respuestas mediante FreeLLMAPI con modelo qwen2.5:3b, totalmente offline.</p>
-      </div>
-      <div class="card fade-in">
-        <div class="ic">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
-        </div>
-        <h3>HUD de sistema</h3>
-        <p>Monitor CPU, RAM, disco y estado de servicios con alertas por voz en tiempo real.</p>
-      </div>
-      <div class="card fade-in">
-        <div class="ic">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2"><path d="M22 10v6M2 10l10-5 10 5-10 5z"></path><path d="M6 12v5c3 3 9 3 12 0v-5"></path></svg>
-        </div>
-        <h3>Modos especializados</h3>
-        <p>Asistente, Amigo y Estudio DAW (Java, SQL, entornos de desarrollo con preguntas pedagógicas).</p>
-      </div>
-      <div class="card fade-in">
-        <div class="ic">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-        </div>
-        <h3>Privacidad total</h3>
-        <p>Sin cuentas, sin API keys, sin telemetría. Todo funciona localmente.</p>
-      </div>
-    </section>
+    <!-- Scripts Modulares del Ecosistema -->
+    <script type="module" src="/assets/jarvis.js"></script>
+    <script type="module" src="/assets/sphere.js"></script>
+    <script type="module" src="/assets/voice-manager.js"></script>
+    <script>
+        // Funciones de control globales blindadas
+        window.openOverlay = function() {
+            const overlay = document.getElementById('voice-overlay');
+            if (overlay) {
+                overlay.style.display = 'flex';
+                setTimeout(() => overlay.classList.add('active'), 20);
+                // Forzar inicialización del canvas de la esfera si existe la función importada
+                if (typeof window.initCanvas === 'function') {
+                    window.initCanvas();
+                }
+                console.log('[NÚCLEO] Esfera 3D abierta');
+            }
+        };
 
-    <section id="how" style="background:var(--bg-2)">
-      <div class="wrap">
-        <div class="sec-head">
-          <p class="eyebrow">Get started in minutes</p>
-          <h2>Tres pasos para hablar con JARVIS</h2>
-        </div>
-        <div class="steps">
-          <div class="step"><h3>Arrancar FreeLLMAPI</h3><p>Inicia la pasarela local de IA en el puerto 3001: <code>localhost:3001</code>.</p></div>
-          <div class="step"><h3>Iniciar Servidor JARVIS</h3><p>Ejecuta <code>node server.js</code> en tu terminal para levantar el backend proxy y sistema de comandos en el puerto 3002 (<code>localhost:3002</code>).</p></div>
-          <div class="step"><h3>Abrir y Hablar</h3><p>Accede a <code>http://localhost:3002</code>, abre la consola interactiva o interactúa con la esfera de voz.</p></div>
-        </div>
-        <div style="text-align:center;margin-top:34px">
-          <a class="btn btn-ghost" href="https://github.com/martillohamer/Jarvis-Matrix">📖 Documentación</a>
-        </div>
-      </div>
-    </section>
+        window.closeOverlay = function() {
+            const overlay = document.getElementById('voice-overlay');
+            if (overlay) {
+                overlay.classList.remove('active');
+                setTimeout(() => overlay.style.display = 'none', 300);
+                console.log('[NÚCLEO] Esfera 3D cerrada');
+            }
+        };
 
-    <section id="requirements">
-      <div class="wrap">
-        <div class="sec-head">
-          <p class="eyebrow">Before you install</p>
-          <h2>System requirements</h2>
-          <p>Jarvis runs the AI and the voice on your own machine, so the experience depends on your PC. These are realistic minimums for the bundled model.</p>
-        </div>
-        <div class="reqs">
-          <table>
-            <thead><tr><th></th><th>Minimum</th><th>Recommended</th></tr></thead>
-            <tbody>
-              <tr><td>OS</td><td>Windows 10 / 11, 64-bit</td><td class="rec">Windows 11, 64-bit</td></tr>
-              <tr><td>CPU</td><td>Any modern 64-bit (x64)</td><td class="rec">Recent multi-core</td></tr>
-              <tr><td>RAM</td><td>8 GB</td><td class="rec">16 GB</td></tr>
-              <tr><td>Free disk</td><td>~4 GB</td><td class="rec">6 GB+</td></tr>
-              <tr><td>GPU</td><td>None (runs on CPU)</td><td class="rec">WebGPU-capable (NVIDIA / AMD / Intel)</td></tr>
-              <tr><td>Internet</td><td>Setup only</td><td class="rec">Offline after setup</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </section>
+        // Enlace del botón de la esfera 3D
+        document.addEventListener('DOMContentLoaded', () => {
+            const launchBtn = document.getElementById('launch-voice-sphere-btn');
+            if (launchBtn) {
+                launchBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    window.openOverlay();
+                });
+            }
 
-    <section class="privacy">
-      <div class="wrap">
-        <div class="sec-head">
-          <p class="eyebrow">Local. Private. Yours.</p>
-          <h2>Nothing you say leaves your computer</h2>
-          <ul>
-            <li>No accounts</li>
-            <li>No API keys</li>
-            <li>No cloud</li>
-            <li>No telemetry</li>
-            <li>No auto-update</li>
-          </ul>
-          <p style="color:var(--text-dim);margin-top:22px">El procesamiento se realiza localmente a través de la pasarela proxy Node.js y FreeLLMAPI (puerto 3001), mientras que la síntesis y reconocimiento de voz se ejecutan en el propio navegador/dispositivo. Ningún dato personal sale de tu red local.</p>
-        </div>
-      </div>
-    </section>
+            // Animación clásica de K.I.T.T. (barrido de LEDs)
+            const leds = document.querySelectorAll('.kitt-led');
+            let index = 0;
+            let direction = 1;
+            
+            setInterval(() => {
+                leds.forEach((led, idx) => {
+                    if (idx >= index && idx <= index + 2) {
+                        led.style.opacity = '1';
+                        led.style.background = '#00ffff';
+                        led.style.boxShadow = '0 0 15px #00ffff';
+                    } else {
+                        led.style.opacity = '0.3';
+                        led.style.background = 'var(--accent-cyan)';
+                        led.style.boxShadow = 'none';
+                    }
+                });
 
-    <section class="final">
-      <div class="wrap">
-        <h2>Ready to meet Jarvis?</h2>
-        <p>Free, unlimited, multilingual, and entirely yours. Download it, run it, and start talking.</p>
-        <div class="cta">
-          <a class="btn btn-primary" href="https://github.com/Ale-Studios/JARVIS-Demo/releases/latest">⬇ Download for Windows</a>
-          <a class="btn btn-ghost" href="https://github.com/Ale-Studios/JARVIS-Demo">View on GitHub</a>
-        </div>
-      </div>
-    </section>
-  </main>
+                index += direction;
+                if (index >= leds.length - 2 || index <= 0) {
+                    direction *= -1;
+                }
+            }, 120);
 
-  <footer>
-    <div class="wrap foot-in">
-      <div>
-        <div class="brand" style="margin-bottom:8px">J<b>.</b>A<b>.</b>R<b>.</b>V<b>.</b>I<b>.</b>S<b>.</b> Demo</div>
-        <p class="foot-note">A free taste of the larger Jarvis desktop assistant --- a separate, proprietary application.</p>
-      </div>
-      <div class="foot-links">
-        <a href="https://github.com/Ale-Studios/JARVIS-Demo#readme">Overview</a>
-        <a href="https://github.com/Ale-Studios/JARVIS-Demo/blob/master/WELCOME.md">Guide</a>
-        <a href="https://github.com/Ale-Studios/JARVIS-Demo/releases/latest">Download</a>
-        <a href="https://github.com/Ale-Studios/JARVIS-Demo/blob/master/LICENSE">License (MIT)</a>
-      </div>
-    </div>
-  </footer>
-</div>
+            // Lógica de Envío de Chat Interactivo con el Backend
+            const sendBtn = document.getElementById('send-btn');
+            const chatInput = document.getElementById('chat-input');
+            const chatHistory = document.getElementById('chat-history');
 
-<!-- Voice Sphere -->
-<div id="voice-sphere" class="voice-sphere" title="Activar voz (Español)" aria-label="Voice activation">
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
-    <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
-    <line x1="12" y1="19" x2="12" y2="23"></line>
-    <line x1="8" y1="23" x2="16" y2="23"></line>
-  </svg>
-</div>
+            function appendMessage(roleLabel, bodyText, variant) {
+                const box = document.createElement('div');
+                const header = document.createElement('div');
+                const para = document.createElement('p');
 
+                header.style.cssText = "font-family: var(--font-mono); font-size: 0.75rem; margin-bottom: 4px;";
+                header.textContent = roleLabel;
+
+                para.style.cssText = "margin: 0; font-size: 0.95rem; white-space: pre-wrap; word-break: break-word;";
+                para.textContent = bodyText;
+
+                if (variant === 'user') {
+                    box.style.cssText = "background: rgba(157, 78, 221, 0.1); border: 1px solid var(--border-glow); padding: 12px 16px; border-radius: 8px; max-width: 80%; margin-left: auto; text-align: right;";
+                    header.style.color = "var(--accent-purple)";
+                } else if (variant === 'error') {
+                    box.style.cssText = "background: rgba(239, 68, 68, 0.1); border: 1px solid #ef4444; padding: 16px; border-radius: 8px; max-width: 80%;";
+                    header.style.color = "#ef4444";
+                } else {
+                    box.style.cssText = "background: rgba(0, 229, 255, 0.05); border: 1px solid var(--border-glow); padding: 16px; border-radius: 8px; max-width: 80%;";
+                    header.style.color = "var(--accent-cyan)";
+                }
+
+                box.appendChild(header);
+                box.appendChild(para);
+                chatHistory.appendChild(box);
+                chatHistory.scrollTop = chatHistory.scrollHeight;
+            }
+
+            async function handleSendMessage() {
+                const text = chatInput.value.trim();
+                if (!text || sendBtn.disabled) return;
+
+                appendMessage("[COMANDANTE]", text, "user");
+                chatInput.value = '';
+                sendBtn.disabled = true;
+                chatInput.disabled = true;
+
+                try {
+                    const res = await fetch('/api/command', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ text })
+                    });
+                    const data = await res.json();
+                    const reply = data.reply || data.response || "Comando procesado correctamente por el núcleo K.I.T.T.";
+                    appendMessage("[JARVIS SYSTEM]", reply, "system");
+                } catch (err) {
+                    console.error('Error de comunicación:', err);
+                    appendMessage("[ERROR DE NÚCLEO]", "No se pudo conectar con el servidor local en el puerto 3002.", "error");
+                } finally {
+                    sendBtn.disabled = false;
+                    chatInput.disabled = false;
+                    chatInput.focus();
+                }
+            }
+
+            if (sendBtn && chatInput) {
+                sendBtn.addEventListener('click', handleSendMessage);
+                chatInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') handleSendMessage();
+                });
+            }
+        });
+    </script>
 </body>
 </html>

@@ -24,7 +24,8 @@ import { timingSafeEqual } from 'node:crypto';
 // ----------------------------- Configuración ---------------------------------
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.JARVIS_PORT) || 3002;
-const HOST = process.env.JARVIS_HOST || '0.0.0.0';
+// Solo escucha en la red local por defecto; usa JARVIS_HOST=0.0.0.0 para exponer a la LAN.
+const HOST = process.env.JARVIS_HOST || '127.0.0.1';
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const FREELLM_URL = (process.env.FREELLM_URL || 'http://127.0.0.1:3001').replace(/\/$/, '');
 const API_KEY = process.env.OPENAI_API_KEY || process.env.FREELLMAPI_API_KEY || '';
@@ -150,7 +151,7 @@ const openTarget = (t) => runDetached('rundll32', ['url.dll,FileProtocolHandler'
 const openFolder = (p) => runDetached('explorer.exe', [p]);
 const startSearvga = () => {
   runDetached('cmd.exe', ['/c', 'start', '', 'Iniciar_SearVGA.bat'], { cwd: SEARVGA_DIR, windowsHide: true });
-  setTimeout(() => openTarget('http://localhost:8889'), 4000);
+  setTimeout(() => openTarget('http://127.0.0.1:8890'), 4000);
 };
 
 // ----------------------------- Información real ------------------------------
@@ -221,28 +222,38 @@ function diskInfo() {
   } catch { return { diskFree: 0, diskTotal: 0 }; }
 }
 async function probeUrl(url, ms = 800) {
-  try { await fetch(url, { signal: AbortSignal.timeout(ms) }); return true; } catch { return false; }
+  const t0 = Date.now();
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(ms) });
+    return { up: r.ok || r.status === 200, status: r.status, latencyMs: Date.now() - t0 };
+  } catch (e) {
+    return { up: false, code: e.cause?.code || e.name, latencyMs: Date.now() - t0 };
+  }
 }
 
 async function probeFreeLLM(ms = 4000) {
+  const t0 = Date.now();
   try {
     const r = await fetch(`${FREELLM_URL}/v1/models`, {
       headers: { Authorization: `Bearer ${API_KEY.trim()}` },
       signal: AbortSignal.timeout(ms),
     });
+    const latencyMs = Date.now() - t0;
     const online = r.ok || r.status === 200 || r.status === 401 || r.status === 403;
-    const out = { online, reachable: true, status: r.status };
+    const out = { online, reachable: true, status: r.status, latencyMs };
     if (!r.ok && (r.status === 401 || r.status === 403)) {
       out.hint = 'La pasarela responde pero requiere validación de clave';
     }
     return out;
   } catch (e) {
-    return { online: false, reachable: false, code: e.cause?.code || e.name, error: `No se puede conectar con FreeLLMAPI en ${FREELLM_URL}` };
+    const latencyMs = Date.now() - t0;
+    return { online: false, reachable: false, code: e.cause?.code || e.name, latencyMs,
+      error: `No se puede conectar con FreeLLMAPI en ${FREELLM_URL}` };
   }
 }
 
 async function getSystemStatus() {
-  const [stats, llm, searvga] = await Promise.all([cpuStats(), probeFreeLLM(1000), probeUrl('http://127.0.0.1:8889/')]);
+  const [stats, llm, searvga] = await Promise.all([cpuStats(), probeFreeLLM(1000), probeUrl('http://127.0.0.1:8890/health')]);
   
   if (llm.online !== freellmLastState) {
     if (!llm.online) freellmJitterCount += 1;
@@ -250,19 +261,22 @@ async function getSystemStatus() {
   }
 
   const mem = os.totalmem();
+  const memFree = os.freemem();
   const disks = diskInfo();
   return {
     cpu: stats.total,
     cpuThreads: stats.threads,
     cpuCores: stats.threads.length,
-    ramUsed: Math.round(100 * (1 - os.freemem() / mem)),
+    ramUsed: Math.round(100 * (1 - memFree / mem)),
+    ramTotal: mem,
+    ramFree: memFree,
     ...disks,
     diskPct: disks.diskTotal > 0 ? Math.round(100 * (1 - disks.diskFree / disks.diskTotal)) : 0,
     freellmJitter: freellmJitterCount,
     services: [
-      { name: 'FreeLLMAPI', port: 3001, up: llm.online },
+      { name: 'FreeLLMAPI', port: 3001, up: llm.online, latencyMs: llm.latencyMs, status: llm.status, hint: llm.hint },
       { name: 'JARVIS', port: PORT, up: true },
-      { name: 'SearVGA', port: 8889, up: searvga },
+      { name: 'SearVGA', port: 8890, up: searvga.up, latencyMs: searvga.latencyMs, status: searvga.status },
     ],
   };
 }
@@ -282,6 +296,61 @@ function runMaintenance() {
     } catch { /* en uso o sin permiso: se omite */ }
   }
   return `Hecho. He vaciado la caché DNS y borrado ${n} archivos temporales antiguos, unos ${Math.round(bytes / 1048576)} megas.`;
+}
+
+// ----------------------------- IA Pasarela -----------------------------------
+const FALLBACK_ROUTES = [
+  '/v1/chat/completions',
+  '/api/chat',
+  '/api/generate'
+];
+// Modelo por defecto compartido entre queryAI() y handleChat().
+const DEFAULT_MODEL = process.env.JARVIS_MODEL || process.env.MODEL || 'auto';
+// Timeout para consultas locales (motor de órdenes).
+const QUERY_AI_TIMEOUT = 30_000;
+// Timeout para el proxy de chat (peticiones del cliente).
+const CHAT_PROXY_TIMEOUT = 90_000;
+
+async function queryAI(text) {
+  const model = DEFAULT_MODEL;
+  console.log(`[NÚCLEO_IA] Solicitando respuesta a pasarela en ${FREELLM_URL}/v1/chat/completions (modelo: ${model})`);
+  try {
+    const res = await fetch(`${FREELLM_URL}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${API_KEY.trim()}`
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: text }],
+        stream: false
+      }),
+      signal: AbortSignal.timeout(QUERY_AI_TIMEOUT)
+    });
+
+    // 401/403 significa que la pasarela responde pero rechaza la clave.
+    if (res.status === 401 || res.status === 403) {
+      console.error(`[NÚCLEO_IA] Pasarela responde pero rechaza la clave (HTTP ${res.status})`);
+      return null;
+    }
+    if (!res.ok) {
+      throw new Error(`Respuesta HTTP no OK: status ${res.status}`);
+    }
+
+    const data = await res.json();
+    const content = data.choices?.[0]?.message?.content || data.reply || null;
+
+    if (!content) {
+      throw new Error('Estructura de respuesta no válida o contenido sin texto');
+    }
+
+    console.log(`[NÚCLEO_IA] Respuesta completada exitosamente desde el modelo ${model}`);
+    return content;
+  } catch (e) {
+    console.error(`[NÚCLEO_IA] Error en conexión con pasarela: ${e.message}`);
+    return null;
+  }
 }
 
 // ----------------------------- Motor de órdenes ------------------------------
@@ -436,6 +505,12 @@ async function handleCommand(raw) {
 
 // ----------------------------- API -------------------------------------------
 const GATEWAY_DOWN = 'Señor, la pasarela de IA no está disponible ahora mismo, pero los sistemas locales operan con normalidad.';
+const FALLBACK_RESPONSES = [
+  'Aquí el núcleo K.I.T.T., procesando información...',
+  'El sistema se encuentra estable, señor.',
+  '¿Hay algo más en lo que pueda ayudarle?',
+  'Sistemas operativos y telemetría en línea.'
+];
 const assistantMsg = (content, extra = {}) => ({ choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }], ...extra });
 const NET_CODES = new Set(['ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'TimeoutError', 'UND_ERR_CONNECT_TIMEOUT', 'EHOSTUNREACH']);
 
@@ -443,22 +518,22 @@ async function handleChat(req, res) {
   const body = await readJSON(req);
   if (!Array.isArray(body.messages) || body.messages.length === 0) return sendJSON(res, 400, { error: 'Falta messages' });
   
-  const targetModel = body.model && body.model !== '?' && body.model.trim() !== '' ? body.model : 'freellmapi/auto';
+  const targetModel = body.model && body.model !== '?' && body.model.trim() !== '' ? body.model : DEFAULT_MODEL;
   const payload = { ...body, model: targetModel, stream: false };
-  
+
   const cleanApiKey = API_KEY.trim();
   const t0 = Date.now();
   let upstream;
-  
+
   try {
     upstream = await fetch(`${FREELLM_URL}/v1/chat/completions`, {
       method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json', 
-        'Authorization': `Bearer ${cleanApiKey}` 
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${cleanApiKey}`
       },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(90000),
+      signal: AbortSignal.timeout(CHAT_PROXY_TIMEOUT),
     });
   } catch (e) {
     const code = e.cause?.code || e.name;
@@ -489,6 +564,8 @@ async function handleChat(req, res) {
 
 async function handleExecute(req, res) {
   if (!clientIsLocal(req)) return sendJSON(res, 403, { error: 'Solo desde este equipo o la red local' });
+  // Si JARVIS_TOKEN está configurado, exígele también en comandos críticos (ejecución local).
+  if (JARVIS_TOKEN && !tokenOk(req)) return sendJSON(res, 403, { error: 'Token requerido para comandos de ejecución' });
   const { command, target } = await readJSON(req);
   switch (command) {
     case 'launch-openmontage':
@@ -509,7 +586,11 @@ async function handleExecute(req, res) {
       break;
     case 'open-folder': {
       const clean = typeof target === 'string' && /^[\w\-. ]+$/.test(target) && !target.includes('..') ? target : 'Jarvis-Matrix';
-      openFolder(path.join(DESKTOP, clean));
+      const resolved = path.resolve(DESKTOP, clean);
+      if (!resolved.toLowerCase().startsWith(DESKTOP.toLowerCase() + path.sep)) {
+        return sendJSON(res, 403, { success: false, error: 'Ruta fuera del escritorio no permitida' });
+      }
+      openFolder(resolved);
       break;
     }
     default:
@@ -528,22 +609,62 @@ async function handleAPI(req, res, pathname) {
   }
   if (pathname === '/api/command' && req.method === 'POST') {
     const { text } = await readJSON(req);
-    if (typeof text !== 'string' || !text.trim() || text.length > 500) return sendJSON(res, 400, { error: 'Texto no válido' });
+    if (typeof text !== 'string' || !text.trim() || text.length > 500)
+      return sendJSON(res, 400, { error: 'Texto no válido' });
+    
+    // 1. Intentar responder mediante motor de órdenes de sistema local
     const result = await handleCommand(text);
-    if (result.handled) { log('CMD', `${result.risk || 'ok'} · ${text.slice(0, 80)}`); audit(`CMD [${result.risk || 'ok'}] "${text.slice(0, 120)}" -> ${result.reply.slice(0, 80)}`); }
-    return sendJSON(res, 200, { handled: result.handled, ...(result.handled ? { reply: result.reply } : {}) });
+    if (result.handled) {
+      log('CMD', `${result.risk || 'ok'} · ${text.slice(0, 80)}`);
+      audit(`CMD [${result.risk || 'ok'}] "${text.slice(0, 120)}" -> ${result.reply.slice(0, 80)}`);
+      return sendJSON(res, 200, { handled: true, reply: result.reply });
+    }
+
+    // 2. Consulta a la pasarela FreeLLMAPI / Ollama local
+    const aiResponse = await queryAI(text);
+    if (aiResponse) {
+      audit(`CMD [NÚCLEO_IA] "${text.slice(0, 120)}" -> ${aiResponse.slice(0, 80)}`);
+      return sendJSON(res, 200, { handled: true, reply: aiResponse });
+    }
+
+    // 3. Fallback inteligente en español cuando la pasarela no está disponible
+    console.log('[NÚCLEO_IA] Pasarela no disponible o error. Utilizando sistema de respaldo.');
+    const fallbackText = await getFallbackResponse(text);
+    audit(`CMD [FALLBACK] "${text.slice(0, 120)}" -> ${fallbackText.slice(0, 80)}`);
+    return sendJSON(res, 200, { handled: true, reply: fallbackText });
   }
   if (pathname === '/api/chat' && req.method === 'POST') return handleChat(req, res);
   if (pathname === '/api/execute' && req.method === 'POST') return handleExecute(req, res);
   if (pathname.startsWith('/api/gmail/')) {
-    try {
-        return sendJSON(res, 501, { error: 'Gmail todavía no está conectado (requiere OAuth con permisos de solo lectura).' });
-    } catch (e) {
-        log('ERROR', `Gmail endpoint error: ${e.message}`);
-        return sendJSON(res, 500, { error: 'Error interno en endpoint Gmail' });
+    const gmailConfigured = !!(process.env.GMAIL_CLIENT_ID && process.env.GMAIL_CLIENT_SECRET);
+    if (gmailConfigured) {
+      return sendJSON(res, 503, {
+        error: 'Gmail configurado pero no implementado en esta versión.',
+        hint: 'Implementar OAuth2 client-credentials flow en handleAPI para /api/gmail/*.',
+      });
     }
+    return sendJSON(res, 501, {
+      error: 'Gmail no está conectado.',
+      hint: 'Configura GMAIL_CLIENT_ID y GMAIL_CLIENT_SECRET en .env para activarlo.',
+    });
   }
   return sendJSON(res, 404, { error: 'Not found' });
+}
+
+async function getFallbackResponse(text) {
+  const lower = text.toLowerCase();
+  if (/hola|buenos d[ií]as|buenas tardes|buenas noches|hey|qu[eé] tal/.test(lower)) {
+    return '¡Saludos! El sistema K.I.T.T. se encuentra plenamente operativo.';
+  }
+  if (/hora|qu[eé] hora es/.test(lower)) {
+    const { hora } = dateTime();
+    return `La hora actual del sistema es ${hora}.`;
+  }
+  if (/telemetr[ií]a|estado|sistema|diagn[oó]stico|rendimiento/.test(lower)) {
+    const s = await getSystemStatus();
+    return `Telemetría local: CPU al ${s.cpu}%, Memoria RAM al ${s.ramUsed}%.`;
+  }
+  return FALLBACK_RESPONSES[Math.floor(Math.random() * FALLBACK_RESPONSES.length)];
 }
 
 // ----------------------------- Archivos estáticos ----------------------------
