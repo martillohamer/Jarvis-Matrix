@@ -2,12 +2,21 @@ import { extractReply, trimHistory } from './lib.js';
 
 const chatHistory = document.getElementById('chat-history');
 const chatInput = document.getElementById('chat-input');
-const chatSendBtn = document.getElementById('chat-send-btn');
-const terminalLog = document.getElementById('terminal-log');
+const chatSendBtn = document.getElementById('send-btn');
+const terminalLog = document.getElementById('holo-terminal-stream');
 const clearChatBtn = document.getElementById('clear-chat-btn');
 const exportSessionBtn = document.getElementById('export-session-btn');
 const micStatusIndicator = document.getElementById('mic-status-indicator');
-const modulator = document.getElementById('kitt-modulator');
+const modulator = document.getElementById('kitt-modulator-bar');
+
+// Cambiar el modo del modulador LED sin borrar sus clases base.
+const MODULATOR_MODES = ['espera', 'pensando', 'hablando', 'escuchando'];
+const setModulatorMode = (mode) => {
+    if (!modulator) return;
+    modulator.classList.remove(...MODULATOR_MODES.map(m => `modo-${m}`));
+    modulator.classList.add(`modo-${mode}`);
+    window.kittMode = mode;
+};
 
 const SYSTEM_PROMPT = { 
     role: 'system', 
@@ -66,7 +75,7 @@ async function handleUserSubmit() {
     chatInput.value = '';
     chatInput.disabled = true;
     chatSendBtn.disabled = true;
-    modulator.className = 'kitt-modulator-container modo-pensando';
+    setModulatorMode('pensando');
 
     messages.push({ role: 'user', content: text });
     renderMessages();
@@ -109,13 +118,13 @@ async function handleUserSubmit() {
         renderMessages();
         sessionStorage.setItem('jarvis_messages', JSON.stringify(messages));
         
-        modulator.className = 'kitt-modulator-container modo-hablando';
+        setModulatorMode('hablando');
         if (window.speakResponse) window.speakResponse(reply);
-        
+
         // El modo hablar se quita cuando termina la síntesis (ver voice-manager)
         // Por ahora simulamos fin tras 2s si no hay voz real
         if (!window.speechSynthesis || !window.speechSynthesis.speaking) {
-             setTimeout(() => modulator.className = 'kitt-modulator-container modo-espera', 2000);
+             setTimeout(() => setModulatorMode('espera'), 2000);
         }
 
     } catch (e) {
@@ -123,7 +132,7 @@ async function handleUserSubmit() {
         logTerminal(errorMsg);
         messages.push({ role: 'assistant', content: errorMsg });
         renderMessages();
-        modulator.className = 'kitt-modulator-container modo-espera';
+        setModulatorMode('espera');
     } finally {
         clearTimeout(timeout);
         chatInput.disabled = false;
@@ -169,16 +178,17 @@ async function updateTelemetry() {
         if (!res.ok) throw new Error();
         const data = await res.json();
         
-        document.getElementById('cpu-val').textContent = `${data.cpu.toFixed(1)}%`;
+        document.getElementById('tele-cpu').textContent = `${data.cpu.toFixed(1)}%`;
         document.getElementById('cpu-fill').style.width = `${data.cpu}%`;
         
-        const ramPct = (data.ramUsed / data.ramTotal) * 100;
-        document.getElementById('ram-val').textContent = `${(data.ramUsed/1024/1024/1024).toFixed(1)} GB`;
+        const ramPct = data.ramTotal > 0 ? (1 - data.ramFree / data.ramTotal) * 100 : 0;
+        document.getElementById('tele-ram').textContent = `${(data.ramFree / 1024 / 1024 / 1024).toFixed(1)} GB libres de ${(data.ramTotal / 1024 / 1024 / 1024).toFixed(1)} GB`;
         document.getElementById('ram-fill').style.width = `${ramPct}%`;
         
         // Badges
         const updateBadge = (id, up) => {
             const el = document.getElementById(id);
+            if (!el) return;
             el.style.background = up ? 'rgba(0,255,100,0.2)' : 'rgba(255,50,50,0.2)';
             el.style.borderColor = up ? '#00ff64' : '#ff3232';
             el.style.color = up ? '#00ff64' : '#ff3232';
@@ -190,12 +200,35 @@ async function updateTelemetry() {
                 if (s.name === 'JARVIS') updateBadge('badge-jarvis', s.up);
                 if (s.name === 'SearVGA') updateBadge('badge-searvga', s.up);
             });
+            // Mostrar latencia/hint cuando esté disponible
+            const llmSvc = data.services.find(s => s.name === 'FreeLLMAPI');
+            if (llmSvc) {
+                const latEl = document.getElementById('tele-freellm-latency');
+                if (latEl) {
+                    latEl.textContent = llmSvc.up
+                        ? `FreeLLMAPI (${llmSvc.latencyMs}ms${llmSvc.status ? `, HTTP ${llmSvc.status}` : ''})`
+                        : `FreeLLMAPI FUERA DE LÍNEA${llmSvc.hint ? ` · ${llmSvc.hint}` : ''}`;
+                    latEl.style.color = llmSvc.up ? '#10b981' : '#ff3232';
+                }
+            }
+            const searSvc = data.services.find(s => s.name === 'SearVGA');
+            if (searSvc) {
+                const searEl = document.getElementById('tele-searvga-latency');
+                if (searEl) {
+                    searEl.textContent = searSvc.up
+                        ? `SearVGA (${searSvc.latencyMs}ms${searSvc.status ? `, HTTP ${searSvc.status}` : ''})`
+                        : `SearVGA FUERA DE LÍNEA`;
+                    searEl.style.color = searSvc.up ? '#10b981' : '#ff3232';
+                }
+            }
         }
         
-        document.getElementById('telemetry-status').textContent = '[ESTABLE]';
+        const statusEl = document.getElementById('telemetry-status');
+        if (statusEl) statusEl.textContent = '[ESTABLE]';
         telemetryTimeout = setTimeout(updateTelemetry, 3000);
     } catch (e) {
-        document.getElementById('telemetry-status').textContent = '[SIN CONEXIÓN]';
+        const statusEl = document.getElementById('telemetry-status');
+        if (statusEl) statusEl.textContent = '[SIN CONEXIÓN]';
         telemetryTimeout = setTimeout(updateTelemetry, 10000);
     }
 }
@@ -206,7 +239,8 @@ fetch('/api/health').then(r => r.json()).then(data => {
     updateTelemetry();
 }).catch(() => {
     logTerminal("ERROR: Nodo central fuera de línea.");
-    document.getElementById('telemetry-status').textContent = '[SIN CONEXIÓN]';
+    const statusEl = document.getElementById('telemetry-status');
+    if (statusEl) statusEl.textContent = '[SIN CONEXIÓN]';
 });
 
 // Listener para el Modulador (cambio de modo externo)

@@ -1,10 +1,10 @@
 import { rmsToDbfs } from './lib.js';
 
 const micStatusIndicator = document.getElementById('mic-status-indicator');
-const voiceToggle = document.getElementById('voice-toggle');
 const profileSelect = document.getElementById('voice-profile-select');
-const statusLabel = document.getElementById('status-label');
-const transcript = document.getElementById('transcript');
+const statusLabel = document.getElementById('sphere-status-label');
+const transcript = document.getElementById('sphere-transcript');
+const voiceToggle = document.getElementById('voice-toggle');
 
 // Configuración de perfiles
 const PROFILES = {
@@ -25,7 +25,7 @@ profileSelect.addEventListener('change', () => {
 });
 
 window.speakResponse = (text) => {
-    if (!voiceToggle.checked || !('speechSynthesis' in window)) return;
+    if ((voiceToggle && !voiceToggle.checked) || !('speechSynthesis' in window)) return;
     
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text.substring(0, 400));
@@ -73,7 +73,7 @@ document.getElementById('start-calibration').addEventListener('click', async (e)
                 stream.getTracks().forEach(t => t.stop());
                 audioCtx.close();
                 
-                const avg = (sum / count).toFixed(1);
+                const avg = count > 0 ? (sum / count).toFixed(1) : "-60.0";
                 micStatusIndicator.textContent = 'MIC: LISTO';
                 e.target.disabled = false;
                 console.log(`Calibración: Media ${avg} dBFS, Pico ${peak.toFixed(1)} dBFS`);
@@ -81,8 +81,9 @@ document.getElementById('start-calibration').addEventListener('click', async (e)
                 localStorage.setItem('jarvis_mic_threshold', (parseFloat(avg) + 10).toString());
             }
         }, 50);
-    } catch (e) {
+    } catch (err) {
         micStatusIndicator.textContent = 'MIC: ERROR';
+        console.warn('[CALIBRACION_MIC]', err?.name || err, err?.message || '');
         e.target.disabled = false;
     }
 });
@@ -94,29 +95,32 @@ if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
     recognition = new SpeechRecognition();
     recognition.lang = 'es-ES';
     recognition.interimResults = true;
-    
+
     recognition.onstart = () => {
-        statusLabel.textContent = 'ESCUCHANDO...';
+        if (statusLabel) statusLabel.textContent = 'ESCUCHANDO...';
         window.setKittMode('escuchando');
     };
-    
+
     recognition.onresult = (event) => {
         const text = event.results[0][0].transcript;
-        transcript.textContent = text;
+        if (transcript) transcript.textContent = text;
         if (event.results[0].isFinal) {
             recognition.stop();
-            statusLabel.textContent = 'PROCESANDO...';
+            if (statusLabel) statusLabel.textContent = 'PROCESANDO...';
             window.setKittMode('pensando');
-            // Enviar al chat (accediendo al input y botón de jarvis.js)
+            // Enviar al chat (usando el ID real del botón)
             const input = document.getElementById('chat-input');
-            input.value = text;
-            document.getElementById('chat-send-btn').click();
+            const sendBtn = document.getElementById('send-btn');
+            if (input && sendBtn) {
+                input.value = text;
+                sendBtn.click();
+            }
         }
     };
-    
+
     recognition.onerror = () => {
         if (window.isOverlayActive) {
-            statusLabel.textContent = 'ERROR DE MICRO';
+            if (statusLabel) statusLabel.textContent = 'ERROR DE MICRO';
             window.setKittMode('espera');
         }
     };

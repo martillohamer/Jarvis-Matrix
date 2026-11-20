@@ -37,10 +37,20 @@
                     <span class="status-badge cyan">[ESTABLE]</span>
                 </div>
                 <div style="font-family: var(--font-mono); font-size: 0.78rem; display: flex; flex-direction: column; gap: 6px;">
-                    <div>CPU (12 Hilos): <span id="tele-cpu" style="color: var(--accent-cyan);">14.2%</span></div>
-                    <div>MEMORIA RAM: <span id="tele-ram" style="color: var(--accent-cyan);">8.4 / 16.0 GB (52%)</span></div>
+                    <div>CPU (12 Hilos): <span id="tele-cpu" style="color: var(--accent-cyan);">14.2%</span>
+                        <div style="height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; margin-top: 3px;">
+                            <div id="cpu-fill" style="height: 100%; background: var(--accent-cyan); width: 14%;"></div>
+                        </div>
+                    </div>
+                    <div>MEMORIA RAM: <span id="tele-ram" style="color: var(--accent-cyan);">8.4 / 16.0 GB (52%)</span>
+                        <div style="height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; margin-top: 3px;">
+                            <div id="ram-fill" style="height: 100%; background: var(--accent-purple); width: 52%;"></div>
+                        </div>
+                    </div>
                     <div>DISCO PRINCIPAL: <span id="tele-disk" style="color: var(--accent-cyan);">D:\ 66% Libre</span></div>
-                    <div>ENLACE RED: <span style="color: #10b981;">FreeLLMAPI (18ms)</span></div>
+                    <div>ENLACE RED: <span id="tele-freellm-latency" style="color: #10b981;">FreeLLMAPI (18ms)</span></div>
+                    <div>SEARVGA: <span id="tele-searvga-latency" style="color: #10b981;">SearVGA (8890)</span></div>
+                    <div style="margin-top: 4px; font-size: 0.68rem; color: var(--text-dim);">Sistema: <span id="telemetry-status" style="color: #10b981;">[ESTABLE]</span></div>
                 </div>
             </div>
 
@@ -149,6 +159,7 @@
                 <canvas id="particle-sphere-canvas" width="500" height="500"></canvas>
             </div>
             <div id="sphere-transcript" style="font-family: var(--font-mono); color: var(--accent-cyan); margin-top: 20px; font-size: 1.1rem;">[ESFERA 3D ACTIVA - INTERACCIÓN NEURAL]</div>
+                    <div id="sphere-status-label" style="font-family: var(--font-mono); color: var(--accent-purple); margin-top: 8px; font-size: 0.8rem;">[ESPERANDO ORDEN] ·</div>
         </div>
     </div>
 
